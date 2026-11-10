@@ -1,4 +1,4 @@
-# ADR-0004: Choice of Core Programming Language (Go / Golang)
+# ADR-0004: Choice of Core Programming Language
 
 ## Status
 Accepted
