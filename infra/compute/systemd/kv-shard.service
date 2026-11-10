@@ -1,0 +1,18 @@
+[Unit]
+Description=Distributed Key-Value Storage Shard Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/opt/kv-store
+EnvironmentFile=-/opt/kv-store/config/shard.env
+ExecStart=/opt/kv-store/bin/shard -id ${SHARD_ID} -port 8081 -advertise ${SHARD_ADVERTISE} -coord ${COORDINATOR_URL} -data-dir /data/kv-store -vnodes 200
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

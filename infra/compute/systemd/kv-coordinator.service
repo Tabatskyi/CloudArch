@@ -1,0 +1,17 @@
+[Unit]
+Description=Distributed Key-Value Store Coordinator
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/opt/kv-store
+ExecStart=/opt/kv-store/bin/coordinator -port 8080 -vnodes 200
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,519 @@
+openapi: 3.0.3
+info:
+  title: Distributed Key-Value Store API
+  description: >-
+    OpenAPI 3.0 specification for the horizontally sharded key-value store (Milestone 2).
+    Provides table schema registration, CRUD operations (EXISTS, CREATE, READ, DELETE),
+    compound primary keys (PartitionKey + SortKey), and intra-partition range queries.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: Coordinator Node Local Ingress
+paths:
+  /healthz:
+    get:
+      summary: Liveness and health probe
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  /api/v1/tables:
+    post:
+      summary: Register a new table
+      operationId: createTable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TableDefinition'
+      responses:
+        '201':
+          description: Table registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TableDefinition'
+        '400':
+          description: Invalid table definition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Table already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      summary: List all registered tables
+      operationId: listTables
+      responses:
+        '200':
+          description: List of tables
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TableDefinition'
+
+  /api/v1/tables/{table}:
+    get:
+      summary: Get table metadata
+      operationId: getTable
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Table definition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TableDefinition'
+        '404':
+          description: Table not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/tables/{table}/records:
+    post:
+      summary: Create or overwrite a record (CREATE)
+      operationId: putRecord
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Record'
+      responses:
+        '200':
+          description: Record stored or updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordResponse'
+        '201':
+          description: Record created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordResponse'
+        '400':
+          description: Missing primary key or schema violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: No available storage shards
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/tables/{table}/records/{partitionKey}:
+    head:
+      summary: Check if record exists (EXISTS)
+      operationId: existsRecord
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: partitionKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: sortKey
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Record exists
+        '404':
+          description: Record does not exist
+    get:
+      summary: Read record by partition key (READ)
+      operationId: getRecord
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: partitionKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: sortKey
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Record retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Record'
+        '404':
+          description: Record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Shard unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Delete record by partition key (DELETE)
+      operationId: deleteRecord
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: partitionKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: sortKey
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Record deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '204':
+          description: Record deleted (no content)
+        '404':
+          description: Table not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/tables/{table}/records/{partitionKey}/{sortKey}:
+    head:
+      summary: Check if compound key record exists (EXISTS)
+      operationId: existsCompoundRecord
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: partitionKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: sortKey
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Record exists
+        '404':
+          description: Record does not exist
+    get:
+      summary: Read compound key record (READ)
+      operationId: getCompoundRecord
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: partitionKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: sortKey
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Record retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Record'
+        '404':
+          description: Record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Delete compound key record (DELETE)
+      operationId: deleteCompoundRecord
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: partitionKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: sortKey
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Record deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '204':
+          description: Record deleted (no content)
+
+  /api/v1/tables/{table}/query:
+    get:
+      summary: Intra-partition range query
+      description: Query records sharing a partition key across an optional range of sort keys.
+      operationId: queryPartition
+      parameters:
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: partitionKey
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: sortKeyFrom
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: sortKeyTo
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Ordered list of matching records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Record'
+        '404':
+          description: Table or partition not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/v1/shards:
+    post:
+      summary: Register a storage shard daemon
+      operationId: registerShard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShardRegistration'
+      responses:
+        '200':
+          description: Shard registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+    get:
+      summary: List registered shards and ring status
+      operationId: listShards
+      responses:
+        '200':
+          description: Active shards in ring
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ShardInfo'
+
+components:
+  schemas:
+    TableDefinition:
+      type: object
+      required:
+        - tableName
+        - partitionKey
+      properties:
+        tableName:
+          type: string
+          example: users
+        partitionKey:
+          type: string
+          example: user_id
+        sortKey:
+          type: string
+          example: timestamp
+          description: Optional sort key attribute name
+
+    Record:
+      type: object
+      required:
+        - partitionKey
+        - value
+      properties:
+        partitionKey:
+          type: string
+          example: user_123
+        sortKey:
+          type: string
+          example: '1700000000'
+        value:
+          description: JSON object or raw value payload
+          oneOf:
+            - type: object
+            - type: string
+            - type: number
+            - type: array
+              items: {}
+
+    RecordResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        shardId:
+          type: string
+          example: shard-1
+        table:
+          type: string
+          example: users
+        partitionKey:
+          type: string
+          example: user_123
+        sortKey:
+          type: string
+          example: '1700000000'
+
+    ShardRegistration:
+      type: object
+      required:
+        - shardId
+        - address
+      properties:
+        shardId:
+          type: string
+          example: shard-1
+        address:
+          type: string
+          example: 10.0.10.50:8081
+        virtualNodes:
+          type: integer
+          default: 150
+
+    ShardInfo:
+      type: object
+      properties:
+        shardId:
+          type: string
+        address:
+          type: string
+        status:
+          type: string
+          example: healthy
+        registeredAt:
+          type: string
+          format: date-time
+
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        nodeId:
+          type: string
+          example: coordinator
+        uptimeSeconds:
+          type: integer
+          example: 3600
+        activeShards:
+          type: integer
+          example: 2
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Operation completed successfully
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          example: Record not found
+        details:
+          type: string
