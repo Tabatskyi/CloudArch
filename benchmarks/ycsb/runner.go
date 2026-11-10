@@ -15,17 +15,17 @@ import (
 )
 
 type BenchmarkResult struct {
-	TotalOps      int
-	DurationSec   float64
-	Throughput    float64
-	ReadOps       int
-	WriteOps      int
-	ErrorOps      int
-	AvgLatencyMs  float64
-	P50LatencyMs  float64
-	P95LatencyMs  float64
-	P99LatencyMs  float64
-	LatenciesRead []float64
+	TotalOps       int
+	DurationSec    float64
+	Throughput     float64
+	ReadOps        int
+	WriteOps       int
+	ErrorOps       int
+	AvgLatencyMs   float64
+	P50LatencyMs   float64
+	P95LatencyMs   float64
+	P99LatencyMs   float64
+	LatenciesRead  []float64
 	LatenciesWrite []float64
 }
 

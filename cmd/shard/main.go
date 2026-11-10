@@ -15,12 +15,12 @@ import (
 
 func main() {
 	var (
-		shardID        = flag.String("id", envOr("SHARD_ID", "shard-1"), "Unique Shard ID")
-		port           = flag.Int("port", 8081, "Port to listen on")
-		advertiseAddr  = flag.String("advertise", envOr("SHARD_ADVERTISE", "localhost:8081"), "Address advertised to coordinator")
-		coordURL       = flag.String("coord", envOr("COORDINATOR_URL", "http://localhost:8080"), "Coordinator endpoint URL")
-		dataDir        = flag.String("data-dir", envOr("DATA_DIR", "/tmp/kv-shard-data"), "Directory for persistent storage snapshots")
-		vnodes         = flag.Int("vnodes", 200, "Number of virtual nodes in consistent hash ring")
+		shardID       = flag.String("id", envOr("SHARD_ID", "shard-1"), "Unique Shard ID")
+		port          = flag.Int("port", 8081, "Port to listen on")
+		advertiseAddr = flag.String("advertise", envOr("SHARD_ADVERTISE", "localhost:8081"), "Address advertised to coordinator")
+		coordURL      = flag.String("coord", envOr("COORDINATOR_URL", "http://localhost:8080"), "Coordinator endpoint URL")
+		dataDir       = flag.String("data-dir", envOr("DATA_DIR", "/tmp/kv-shard-data"), "Directory for persistent storage snapshots")
+		vnodes        = flag.Int("vnodes", 200, "Number of virtual nodes in consistent hash ring")
 	)
 	flag.Parse()
 

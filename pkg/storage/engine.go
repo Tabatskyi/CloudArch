@@ -12,11 +12,11 @@ import (
 )
 
 var (
-	ErrTableNotFound      = errors.New("table not found")
-	ErrTableAlreadyExists = errors.New("table already exists")
-	ErrRecordNotFound     = errors.New("record not found")
+	ErrTableNotFound       = errors.New("table not found")
+	ErrTableAlreadyExists  = errors.New("table already exists")
+	ErrRecordNotFound      = errors.New("record not found")
 	ErrMissingPartitionKey = errors.New("record is missing partition key")
-	ErrMissingSortKey     = errors.New("table requires a sort key but record sort key is missing")
+	ErrMissingSortKey      = errors.New("table requires a sort key but record sort key is missing")
 )
 
 // TableStore maintains the schema and partition collections for a single table.
@@ -228,7 +228,7 @@ func (e *Engine) TotalRecords() int {
 }
 
 type snapshotData struct {
-	Tables  []api.TableDefinition `json:"tables"`
+	Tables  []api.TableDefinition   `json:"tables"`
 	Records map[string][]api.Record `json:"records"`
 }
 
