@@ -44,74 +44,74 @@ func NewServer(cfg Config) *Server {
 	}
 
 	engine := storage.NewEngine(cfg.DataDir)
-	s := &Server{
+	server := &Server{
 		cfg:       cfg,
 		engine:    engine,
 		mux:       http.NewServeMux(),
 		startTime: time.Now(),
 	}
-	s.registerRoutes()
-	return s
+	server.registerRoutes()
+	return server
 }
 
 // Engine returns the underlying storage engine.
-func (s *Server) Engine() *storage.Engine {
-	return s.engine
+func (server *Server) Engine() *storage.Engine {
+	return server.engine
 }
 
-func (s *Server) registerRoutes() {
-	s.mux.HandleFunc("/healthz", s.handleHealthz)
-	s.mux.HandleFunc("/api/v1/tables", s.handleTables)
-	s.mux.HandleFunc("/api/v1/tables/", s.handleTableRoutes)
+func (server *Server) registerRoutes() {
+	server.mux.HandleFunc("/healthz", server.handleHealthz)
+	server.mux.HandleFunc("/api/v1/tables", server.handleTables)
+	server.mux.HandleFunc("/api/v1/tables/", server.handleTableRoutes)
 }
 
-func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+func (server *Server) handleHealthz(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	status := api.HealthStatus{
 		Status:        "ok",
-		NodeID:        s.cfg.ShardID,
-		UptimeSeconds: int64(time.Since(s.startTime).Seconds()),
+		NodeID:        server.cfg.ShardID,
+		UptimeSeconds: int64(time.Since(server.startTime).Seconds()),
 	}
-	writeJSON(w, http.StatusOK, status)
+	writeJSON(writer, http.StatusOK, status)
 }
 
-func (s *Server) handleTables(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
+func (server *Server) handleTables(writer http.ResponseWriter, request *http.Request) {
+	switch request.Method {
 	case http.MethodPost:
 		var def api.TableDefinition
-		if err := json.NewDecoder(r.Body).Decode(&def); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		if err := json.NewDecoder(request.Body).Decode(&def); err != nil {
+			writeError(writer, http.StatusBadRequest, "invalid request body", err.Error())
 			return
 		}
-		if err := s.engine.CreateTable(def); err != nil {
+		if err := server.engine.CreateTable(def); err != nil {
 			if err == storage.ErrTableAlreadyExists {
-				writeError(w, http.StatusConflict, "table already exists", "")
+				writeError(writer, http.StatusConflict, "table already exists", "")
 				return
 			}
-			writeError(w, http.StatusBadRequest, err.Error(), "")
+			writeError(writer, http.StatusBadRequest, err.Error(), "")
 			return
 		}
-		writeJSON(w, http.StatusCreated, def)
+		writeJSON(writer, http.StatusCreated, def)
 
 	case http.MethodGet:
-		tables := s.engine.ListTables()
-		writeJSON(w, http.StatusOK, tables)
+		tables := server.engine.ListTables()
+		writeJSON(writer, http.StatusOK, tables)
 
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (s *Server) handleTableRoutes(w http.ResponseWriter, r *http.Request) {
+func (server *Server) handleTableRoutes(writer http.ResponseWriter, request *http.Request) {
 	// Path pattern: /api/v1/tables/{table}/...
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/tables/")
+	path := strings.TrimPrefix(request.URL.Path, "/api/v1/tables/")
 	parts := strings.Split(path, "/")
 	if len(parts) == 0 || parts[0] == "" {
-		http.NotFound(w, r)
+		http.NotFound(writer, request)
 		return
 	}
 
@@ -119,168 +119,168 @@ func (s *Server) handleTableRoutes(w http.ResponseWriter, r *http.Request) {
 
 	if len(parts) == 1 {
 		// /api/v1/tables/{table}
-		if r.Method == http.MethodGet {
-			def, err := s.engine.GetTable(tableName)
+		if request.Method == http.MethodGet {
+			def, err := server.engine.GetTable(tableName)
 			if err != nil {
-				writeError(w, http.StatusNotFound, "table not found", "")
+				writeError(writer, http.StatusNotFound, "table not found", "")
 				return
 			}
-			writeJSON(w, http.StatusOK, def)
+			writeJSON(writer, http.StatusOK, def)
 			return
 		}
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	sub := parts[1]
 	switch sub {
 	case "query":
-		s.handleQuery(w, r, tableName)
+		server.handleQuery(writer, request, tableName)
 	case "records":
-		s.handleRecords(w, r, tableName, parts[2:])
+		server.handleRecords(writer, request, tableName, parts[2:])
 	default:
-		http.NotFound(w, r)
+		http.NotFound(writer, request)
 	}
 }
 
-func (s *Server) handleRecords(w http.ResponseWriter, r *http.Request, table string, keyParts []string) {
-	switch r.Method {
+func (server *Server) handleRecords(writer http.ResponseWriter, request *http.Request, table string, keyParts []string) {
+	switch request.Method {
 	case http.MethodPost, http.MethodPut:
 		var rec api.Record
-		if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid record payload", err.Error())
+		if err := json.NewDecoder(request.Body).Decode(&rec); err != nil {
+			writeError(writer, http.StatusBadRequest, "invalid record payload", err.Error())
 			return
 		}
 
-		if err := s.engine.PutRecord(table, rec); err != nil {
+		if err := server.engine.PutRecord(table, rec); err != nil {
 			if err == storage.ErrTableNotFound {
-				writeError(w, http.StatusNotFound, "table not found", "")
+				writeError(writer, http.StatusNotFound, "table not found", "")
 				return
 			}
-			writeError(w, http.StatusBadRequest, err.Error(), "")
+			writeError(writer, http.StatusBadRequest, err.Error(), "")
 			return
 		}
 
 		resp := api.RecordResponse{
 			Success:      true,
-			ShardID:      s.cfg.ShardID,
+			ShardID:      server.cfg.ShardID,
 			Table:        table,
 			PartitionKey: rec.PartitionKey,
 			SortKey:      rec.SortKey,
 		}
-		writeJSON(w, http.StatusOK, resp)
+		writeJSON(writer, http.StatusOK, resp)
 
 	case http.MethodGet, http.MethodHead:
 		if len(keyParts) == 0 || keyParts[0] == "" {
-			writeError(w, http.StatusBadRequest, "partitionKey is required", "")
+			writeError(writer, http.StatusBadRequest, "partitionKey is required", "")
 			return
 		}
 
-		pk := keyParts[0]
-		sk := r.URL.Query().Get("sortKey")
+		partKey := keyParts[0]
+		sortKey := request.URL.Query().Get("sortKey")
 		if len(keyParts) > 1 && keyParts[1] != "" {
-			sk = keyParts[1]
+			sortKey = keyParts[1]
 		}
 
-		if r.Method == http.MethodHead {
-			exists, err := s.engine.ExistsRecord(table, pk, sk)
+		if request.Method == http.MethodHead {
+			exists, err := server.engine.ExistsRecord(table, partKey, sortKey)
 			if err != nil || !exists {
-				w.WriteHeader(http.StatusNotFound)
+				writer.WriteHeader(http.StatusNotFound)
 				return
 			}
-			w.WriteHeader(http.StatusOK)
+			writer.WriteHeader(http.StatusOK)
 			return
 		}
 
-		rec, err := s.engine.GetRecord(table, pk, sk)
+		rec, err := server.engine.GetRecord(table, partKey, sortKey)
 		if err != nil {
 			if err == storage.ErrRecordNotFound {
-				writeError(w, http.StatusNotFound, "record not found", "")
+				writeError(writer, http.StatusNotFound, "record not found", "")
 				return
 			}
 			if err == storage.ErrTableNotFound {
-				writeError(w, http.StatusNotFound, "table not found", "")
+				writeError(writer, http.StatusNotFound, "table not found", "")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, err.Error(), "")
+			writeError(writer, http.StatusInternalServerError, err.Error(), "")
 			return
 		}
-		writeJSON(w, http.StatusOK, rec)
+		writeJSON(writer, http.StatusOK, rec)
 
 	case http.MethodDelete:
 		if len(keyParts) == 0 || keyParts[0] == "" {
-			writeError(w, http.StatusBadRequest, "partitionKey is required", "")
+			writeError(writer, http.StatusBadRequest, "partitionKey is required", "")
 			return
 		}
 
-		pk := keyParts[0]
-		sk := r.URL.Query().Get("sortKey")
+		partKey := keyParts[0]
+		sortKey := request.URL.Query().Get("sortKey")
 		if len(keyParts) > 1 && keyParts[1] != "" {
-			sk = keyParts[1]
+			sortKey = keyParts[1]
 		}
 
-		if err := s.engine.DeleteRecord(table, pk, sk); err != nil {
+		if err := server.engine.DeleteRecord(table, partKey, sortKey); err != nil {
 			if err == storage.ErrTableNotFound {
-				writeError(w, http.StatusNotFound, "table not found", "")
+				writeError(writer, http.StatusNotFound, "table not found", "")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, err.Error(), "")
+			writeError(writer, http.StatusInternalServerError, err.Error(), "")
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		writer.WriteHeader(http.StatusNoContent)
 
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(writer, http.StatusMethodNotAllowed, "method not allowed", "")
 	}
 }
 
-func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request, table string) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+func (server *Server) handleQuery(writer http.ResponseWriter, request *http.Request, table string) {
+	if request.Method != http.MethodGet {
+		writeError(writer, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
 	}
 
-	pk := r.URL.Query().Get("partitionKey")
-	if pk == "" {
-		writeError(w, http.StatusBadRequest, "partitionKey query parameter is required", "")
+	partKey := request.URL.Query().Get("partitionKey")
+	if partKey == "" {
+		writeError(writer, http.StatusBadRequest, "partitionKey query parameter is required", "")
 		return
 	}
 
-	sortFrom := r.URL.Query().Get("sortKeyFrom")
-	sortTo := r.URL.Query().Get("sortKeyTo")
+	sortFrom := request.URL.Query().Get("sortKeyFrom")
+	sortTo := request.URL.Query().Get("sortKeyTo")
 	limit := 100
-	if l := r.URL.Query().Get("limit"); l != "" {
+	if l := request.URL.Query().Get("limit"); l != "" {
 		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
 			limit = parsed
 		}
 	}
 
-	records, err := s.engine.QueryPartition(table, pk, sortFrom, sortTo, limit)
+	records, err := server.engine.QueryPartition(table, partKey, sortFrom, sortTo, limit)
 	if err != nil {
 		if err == storage.ErrTableNotFound {
-			writeError(w, http.StatusNotFound, "table not found", "")
+			writeError(writer, http.StatusNotFound, "table not found", "")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error(), "")
+		writeError(writer, http.StatusInternalServerError, err.Error(), "")
 		return
 	}
 
 	if records == nil {
 		records = []api.Record{}
 	}
-	writeJSON(w, http.StatusOK, records)
+	writeJSON(writer, http.StatusOK, records)
 }
 
 // RegisterWithCoordinator attempts to register this shard with the coordinator.
-func (s *Server) RegisterWithCoordinator(ctx context.Context) error {
-	if s.cfg.CoordinatorURL == "" {
+func (server *Server) RegisterWithCoordinator(ctx context.Context) error {
+	if server.cfg.CoordinatorURL == "" {
 		return nil
 	}
 
 	regPayload := api.ShardRegistration{
-		ShardID:      s.cfg.ShardID,
-		Address:      s.cfg.AdvertiseAddr,
-		VirtualNodes: s.cfg.VirtualNodes,
+		ShardID:      server.cfg.ShardID,
+		Address:      server.cfg.AdvertiseAddr,
+		VirtualNodes: server.cfg.VirtualNodes,
 	}
 
 	body, err := json.Marshal(regPayload)
@@ -288,7 +288,7 @@ func (s *Server) RegisterWithCoordinator(ctx context.Context) error {
 		return err
 	}
 
-	reqURL := fmt.Sprintf("%s/internal/v1/shards", strings.TrimRight(s.cfg.CoordinatorURL, "/"))
+	reqURL := fmt.Sprintf("%s/internal/v1/shards", strings.TrimRight(server.cfg.CoordinatorURL, "/"))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewBuffer(body))
 	if err != nil {
 		return err
@@ -306,12 +306,12 @@ func (s *Server) RegisterWithCoordinator(ctx context.Context) error {
 		return fmt.Errorf("coordinator returned status %d", resp.StatusCode)
 	}
 
-	log.Printf("[shard:%s] successfully registered with coordinator at %s", s.cfg.ShardID, reqURL)
+	log.Printf("[shard:%s] successfully registered with coordinator at %s", server.cfg.ShardID, reqURL)
 	return nil
 }
 
 // StartBootstrapLoop runs a background loop until successfully registered with coordinator.
-func (s *Server) StartBootstrapLoop(ctx context.Context) {
+func (server *Server) StartBootstrapLoop(ctx context.Context) {
 	go func() {
 		backoff := 1 * time.Second
 		for {
@@ -321,10 +321,10 @@ func (s *Server) StartBootstrapLoop(ctx context.Context) {
 			default:
 			}
 
-			if err := s.RegisterWithCoordinator(ctx); err == nil {
+			if err := server.RegisterWithCoordinator(ctx); err == nil {
 				return
 			} else {
-				log.Printf("[shard:%s] coordinator registration failed (%v), retrying in %v...", s.cfg.ShardID, err, backoff)
+				log.Printf("[shard:%s] coordinator registration failed (%v), retrying in %v...", server.cfg.ShardID, err, backoff)
 			}
 
 			time.Sleep(backoff)
@@ -336,25 +336,25 @@ func (s *Server) StartBootstrapLoop(ctx context.Context) {
 }
 
 // Start begins serving HTTP traffic.
-func (s *Server) Start() error {
-	s.server = &http.Server{
-		Addr:    s.cfg.ListenAddr,
-		Handler: s.mux,
+func (server *Server) Start() error {
+	server.server = &http.Server{
+		Addr:    server.cfg.ListenAddr,
+		Handler: server.mux,
 	}
-	return s.server.ListenAndServe()
+	return server.server.ListenAndServe()
 }
 
 // Stop gracefully shuts down the server.
-func (s *Server) Stop(ctx context.Context) error {
-	if s.server != nil {
-		return s.server.Shutdown(ctx)
+func (server *Server) Stop(ctx context.Context) error {
+	if server.server != nil {
+		return server.server.Shutdown(ctx)
 	}
 	return nil
 }
 
 // ServeHTTP implements http.Handler for testing.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.mux.ServeHTTP(w, r)
+func (server *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	server.mux.ServeHTTP(w, r)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {

@@ -13,9 +13,9 @@ type TableDefinition struct {
 
 // Record represents a single stored item with compound primary key.
 type Record struct {
-	PartitionKey string      `json:"partitionKey"`
-	SortKey      string      `json:"sortKey,omitempty"`
-	Value        interface{} `json:"value"`
+	PartitionKey string `json:"partitionKey"`
+	SortKey      string `json:"sortKey,omitempty"`
+	Value        any    `json:"value"`
 }
 
 // RecordResponse is returned on successful write operations.

@@ -41,7 +41,7 @@ func NewServer(cfg Config) *Server {
 		cfg.VirtualNodes = 200
 	}
 
-	s := &Server{
+	server := &Server{
 		cfg:        cfg,
 		ring:       ring.NewRing(cfg.VirtualNodes, ring.MD5Hash),
 		tables:     make(map[string]api.TableDefinition),
@@ -50,258 +50,258 @@ func NewServer(cfg Config) *Server {
 		startTime:  time.Now(),
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 	}
-	s.registerRoutes()
-	return s
+	server.registerRoutes()
+	return server
 }
 
 // Ring returns the consistent hash ring instance.
-func (s *Server) Ring() *ring.Ring {
-	return s.ring
+func (server *Server) Ring() *ring.Ring {
+	return server.ring
 }
 
-func (s *Server) registerRoutes() {
-	s.mux.HandleFunc("/healthz", s.handleHealthz)
-	s.mux.HandleFunc("/internal/v1/shards", s.handleInternalShards)
-	s.mux.HandleFunc("/api/v1/tables", s.handleTables)
-	s.mux.HandleFunc("/api/v1/tables/", s.handleTableSubroutes)
+func (server *Server) registerRoutes() {
+	server.mux.HandleFunc("/healthz", server.handleHealthz)
+	server.mux.HandleFunc("/internal/v1/shards", server.handleInternalShards)
+	server.mux.HandleFunc("/api/v1/tables", server.handleTables)
+	server.mux.HandleFunc("/api/v1/tables/", server.handleTableSubroutes)
 }
 
-func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+func (server *Server) handleHealthz(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	status := api.HealthStatus{
 		Status:        "ok",
 		NodeID:        "coordinator",
-		UptimeSeconds: int64(time.Since(s.startTime).Seconds()),
-		ActiveShards:  s.ring.MemberCount(),
+		UptimeSeconds: int64(time.Since(server.startTime).Seconds()),
+		ActiveShards:  server.ring.MemberCount(),
 	}
-	writeJSON(w, http.StatusOK, status)
+	writeJSON(writer, http.StatusOK, status)
 }
 
-func (s *Server) handleInternalShards(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
+func (server *Server) handleInternalShards(writer http.ResponseWriter, request *http.Request) {
+	switch request.Method {
 	case http.MethodPost:
 		var reg api.ShardRegistration
-		if err := json.NewDecoder(r.Body).Decode(&reg); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid shard registration payload", err.Error())
+		if err := json.NewDecoder(request.Body).Decode(&reg); err != nil {
+			writeError(writer, http.StatusBadRequest, "invalid shard registration payload", err.Error())
 			return
 		}
 
 		if reg.ShardID == "" || reg.Address == "" {
-			writeError(w, http.StatusBadRequest, "shardId and address are required", "")
+			writeError(writer, http.StatusBadRequest, "shardId and address are required", "")
 			return
 		}
 
-		s.mu.Lock()
-		s.ring.AddNode(reg.ShardID, reg.Address)
-		s.shards[reg.ShardID] = api.ShardInfo{
+		server.mu.Lock()
+		server.ring.AddNode(reg.ShardID, reg.Address)
+		server.shards[reg.ShardID] = api.ShardInfo{
 			ShardID:      reg.ShardID,
 			Address:      reg.Address,
 			Status:       "healthy",
 			RegisteredAt: time.Now(),
 		}
 		// Capture current tables to sync with new shard
-		currentTables := make([]api.TableDefinition, 0, len(s.tables))
-		for _, t := range s.tables {
-			currentTables = append(currentTables, t)
+		currentTables := make([]api.TableDefinition, 0, len(server.tables))
+		for _, table := range server.tables {
+			currentTables = append(currentTables, table)
 		}
-		s.mu.Unlock()
+		server.mu.Unlock()
 
 		// Propagate existing table schemas to the newly registered shard
 		go func(addr string, tables []api.TableDefinition) {
 			for _, tbl := range tables {
 				body, _ := json.Marshal(tbl)
 				reqURL := fmt.Sprintf("http://%s/api/v1/tables", addr)
-				_, _ = s.httpClient.Post(reqURL, "application/json", bytes.NewBuffer(body))
+				_, _ = server.httpClient.Post(reqURL, "application/json", bytes.NewBuffer(body))
 			}
 		}(reg.Address, currentTables)
 
-		log.Printf("[coordinator] registered shard %s at %s (total active shards: %d)", reg.ShardID, reg.Address, s.ring.MemberCount())
-		writeJSON(w, http.StatusOK, api.SuccessResponse{
+		log.Printf("[coordinator] registered shard %s at %s (total active shards: %d)", reg.ShardID, reg.Address, server.ring.MemberCount())
+		writeJSON(writer, http.StatusOK, api.SuccessResponse{
 			Success: true,
 			Message: fmt.Sprintf("shard %s registered successfully", reg.ShardID),
 		})
 
 	case http.MethodGet:
-		s.mu.RLock()
-		defer s.mu.RUnlock()
+		server.mu.RLock()
+		defer server.mu.RUnlock()
 
-		list := make([]api.ShardInfo, 0, len(s.shards))
-		for _, info := range s.shards {
+		list := make([]api.ShardInfo, 0, len(server.shards))
+		for _, info := range server.shards {
 			list = append(list, info)
 		}
-		writeJSON(w, http.StatusOK, list)
+		writeJSON(writer, http.StatusOK, list)
 
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (s *Server) handleTables(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
+func (server *Server) handleTables(writer http.ResponseWriter, request *http.Request) {
+	switch request.Method {
 	case http.MethodPost:
 		var def api.TableDefinition
-		if err := json.NewDecoder(r.Body).Decode(&def); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid table payload", err.Error())
+		if err := json.NewDecoder(request.Body).Decode(&def); err != nil {
+			writeError(writer, http.StatusBadRequest, "invalid table payload", err.Error())
 			return
 		}
 
 		if def.TableName == "" || def.PartitionKey == "" {
-			writeError(w, http.StatusBadRequest, "tableName and partitionKey are required", "")
+			writeError(writer, http.StatusBadRequest, "tableName and partitionKey are required", "")
 			return
 		}
 
-		s.mu.Lock()
-		if _, exists := s.tables[def.TableName]; exists {
-			s.mu.Unlock()
-			writeError(w, http.StatusConflict, "table already exists", "")
+		server.mu.Lock()
+		if _, exists := server.tables[def.TableName]; exists {
+			server.mu.Unlock()
+			writeError(writer, http.StatusConflict, "table already exists", "")
 			return
 		}
-		s.tables[def.TableName] = def
-		members := s.ring.GetMembers()
-		s.mu.Unlock()
+		server.tables[def.TableName] = def
+		members := server.ring.GetMembers()
+		server.mu.Unlock()
 
 		// Broadcast table creation to all active shards
 		for _, addr := range members {
 			body, _ := json.Marshal(def)
 			reqURL := fmt.Sprintf("http://%s/api/v1/tables", addr)
-			_, _ = s.httpClient.Post(reqURL, "application/json", bytes.NewBuffer(body))
+			_, _ = server.httpClient.Post(reqURL, "application/json", bytes.NewBuffer(body))
 		}
 
-		writeJSON(w, http.StatusCreated, def)
+		writeJSON(writer, http.StatusCreated, def)
 
 	case http.MethodGet:
-		s.mu.RLock()
-		defer s.mu.RUnlock()
+		server.mu.RLock()
+		defer server.mu.RUnlock()
 
-		list := make([]api.TableDefinition, 0, len(s.tables))
-		for _, t := range s.tables {
-			list = append(list, t)
+		list := make([]api.TableDefinition, 0, len(server.tables))
+		for _, table := range server.tables {
+			list = append(list, table)
 		}
-		writeJSON(w, http.StatusOK, list)
+		writeJSON(writer, http.StatusOK, list)
 
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (s *Server) handleTableSubroutes(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/tables/")
+func (server *Server) handleTableSubroutes(writer http.ResponseWriter, request *http.Request) {
+	path := strings.TrimPrefix(request.URL.Path, "/api/v1/tables/")
 	parts := strings.Split(path, "/")
 	if len(parts) == 0 || parts[0] == "" {
-		http.NotFound(w, r)
+		http.NotFound(writer, request)
 		return
 	}
 
 	tableName := parts[0]
 
-	s.mu.RLock()
-	tblDef, exists := s.tables[tableName]
-	s.mu.RUnlock()
+	server.mu.RLock()
+	tblDef, exists := server.tables[tableName]
+	server.mu.RUnlock()
 
 	if len(parts) == 1 {
 		// /api/v1/tables/{table}
-		if r.Method == http.MethodGet {
+		if request.Method == http.MethodGet {
 			if !exists {
-				writeError(w, http.StatusNotFound, "table not found", "")
+				writeError(writer, http.StatusNotFound, "table not found", "")
 				return
 			}
-			writeJSON(w, http.StatusOK, tblDef)
+			writeJSON(writer, http.StatusOK, tblDef)
 			return
 		}
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	if !exists {
-		writeError(w, http.StatusNotFound, "table not found", "")
+		writeError(writer, http.StatusNotFound, "table not found", "")
 		return
 	}
 
 	sub := parts[1]
 	switch sub {
 	case "query":
-		s.proxyQuery(w, r, tableName)
+		server.proxyQuery(writer, request, tableName)
 	case "records":
-		s.proxyRecords(w, r, tableName, tblDef, parts[2:])
+		server.proxyRecords(writer, request, tableName, tblDef, parts[2:])
 	default:
-		http.NotFound(w, r)
+		http.NotFound(writer, request)
 	}
 }
 
-func (s *Server) proxyRecords(w http.ResponseWriter, r *http.Request, table string, tblDef api.TableDefinition, keyParts []string) {
-	switch r.Method {
+func (server *Server) proxyRecords(writer http.ResponseWriter, request *http.Request, table string, tblDef api.TableDefinition, keyParts []string) {
+	switch request.Method {
 	case http.MethodPost, http.MethodPut:
-		bodyBytes, err := io.ReadAll(r.Body)
+		bodyBytes, err := io.ReadAll(request.Body)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "failed to read body", err.Error())
+			writeError(writer, http.StatusBadRequest, "failed to read body", err.Error())
 			return
 		}
 
 		var rec api.Record
 		if err := json.Unmarshal(bodyBytes, &rec); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid record payload", err.Error())
+			writeError(writer, http.StatusBadRequest, "invalid record payload", err.Error())
 			return
 		}
 
 		if rec.PartitionKey == "" {
-			writeError(w, http.StatusBadRequest, "partitionKey is required", "")
+			writeError(writer, http.StatusBadRequest, "partitionKey is required", "")
 			return
 		}
 		if tblDef.SortKey != "" && rec.SortKey == "" {
-			writeError(w, http.StatusBadRequest, "table requires sortKey but sortKey is missing", "")
+			writeError(writer, http.StatusBadRequest, "table requires sortKey but sortKey is missing", "")
 			return
 		}
 
 		// Resolve destination shard via consistent hash ring
-		_, shardAddr, err := s.ring.GetNode(rec.PartitionKey)
+		_, shardAddr, err := server.ring.GetNode(rec.PartitionKey)
 		if err != nil {
-			writeError(w, http.StatusServiceUnavailable, "no available storage shards in ring", err.Error())
+			writeError(writer, http.StatusServiceUnavailable, "no available storage shards in ring", err.Error())
 			return
 		}
 
 		targetURL := fmt.Sprintf("http://%s/api/v1/tables/%s/records", shardAddr, table)
-		req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewBuffer(bodyBytes))
+		req, err := http.NewRequestWithContext(request.Context(), request.Method, targetURL, bytes.NewBuffer(bodyBytes))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create proxy request", err.Error())
+			writeError(writer, http.StatusInternalServerError, "failed to create proxy request", err.Error())
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := s.httpClient.Do(req)
+		resp, err := server.httpClient.Do(req)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "shard unreachable", err.Error())
+			writeError(writer, http.StatusBadGateway, "shard unreachable", err.Error())
 			return
 		}
 		defer resp.Body.Close()
 
-		copyHeaders(w.Header(), resp.Header)
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
+		copyHeaders(writer.Header(), resp.Header)
+		writer.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(writer, resp.Body)
 
 	case http.MethodGet, http.MethodHead, http.MethodDelete:
 		if len(keyParts) == 0 || keyParts[0] == "" {
-			writeError(w, http.StatusBadRequest, "partitionKey is required", "")
+			writeError(writer, http.StatusBadRequest, "partitionKey is required", "")
 			return
 		}
 
 		pk := keyParts[0]
-		sk := r.URL.Query().Get("sortKey")
+		sk := request.URL.Query().Get("sortKey")
 		if len(keyParts) > 1 && keyParts[1] != "" {
 			sk = keyParts[1]
 		}
 
 		// Resolve destination shard
-		_, shardAddr, err := s.ring.GetNode(pk)
+		_, shardAddr, err := server.ring.GetNode(pk)
 		if err != nil {
-			if r.Method == http.MethodHead {
-				w.WriteHeader(http.StatusServiceUnavailable)
+			if request.Method == http.MethodHead {
+				writer.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
-			writeError(w, http.StatusServiceUnavailable, "no available storage shards in ring", err.Error())
+			writeError(writer, http.StatusServiceUnavailable, "no available storage shards in ring", err.Error())
 			return
 		}
 
@@ -312,89 +312,89 @@ func (s *Server) proxyRecords(w http.ResponseWriter, r *http.Request, table stri
 			targetURL = fmt.Sprintf("http://%s/api/v1/tables/%s/records/%s", shardAddr, table, pk)
 		}
 
-		req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, nil)
+		req, err := http.NewRequestWithContext(request.Context(), request.Method, targetURL, nil)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create proxy request", err.Error())
+			writeError(writer, http.StatusInternalServerError, "failed to create proxy request", err.Error())
 			return
 		}
 
-		resp, err := s.httpClient.Do(req)
+		resp, err := server.httpClient.Do(req)
 		if err != nil {
-			if r.Method == http.MethodHead {
-				w.WriteHeader(http.StatusBadGateway)
+			if request.Method == http.MethodHead {
+				writer.WriteHeader(http.StatusBadGateway)
 				return
 			}
-			writeError(w, http.StatusBadGateway, "shard unreachable", err.Error())
+			writeError(writer, http.StatusBadGateway, "shard unreachable", err.Error())
 			return
 		}
 		defer resp.Body.Close()
 
-		copyHeaders(w.Header(), resp.Header)
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
+		copyHeaders(writer.Header(), resp.Header)
+		writer.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(writer, resp.Body)
 
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (s *Server) proxyQuery(w http.ResponseWriter, r *http.Request, table string) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+func (server *Server) proxyQuery(writer http.ResponseWriter, request *http.Request, table string) {
+	if request.Method != http.MethodGet {
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	pk := r.URL.Query().Get("partitionKey")
+	pk := request.URL.Query().Get("partitionKey")
 	if pk == "" {
-		writeError(w, http.StatusBadRequest, "partitionKey query parameter is required", "")
+		writeError(writer, http.StatusBadRequest, "partitionKey query parameter is required", "")
 		return
 	}
 
-	_, shardAddr, err := s.ring.GetNode(pk)
+	_, shardAddr, err := server.ring.GetNode(pk)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "no available storage shards in ring", err.Error())
+		writeError(writer, http.StatusServiceUnavailable, "no available storage shards in ring", err.Error())
 		return
 	}
 
-	targetURL := fmt.Sprintf("http://%s/api/v1/tables/%s/query?%s", shardAddr, table, r.URL.RawQuery)
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
+	targetURL := fmt.Sprintf("http://%s/api/v1/tables/%s/query?%s", shardAddr, table, request.URL.RawQuery)
+	req, err := http.NewRequestWithContext(request.Context(), http.MethodGet, targetURL, nil)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create proxy query", err.Error())
+		writeError(writer, http.StatusInternalServerError, "failed to create proxy query", err.Error())
 		return
 	}
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := server.httpClient.Do(req)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "shard unreachable", err.Error())
+		writeError(writer, http.StatusBadGateway, "shard unreachable", err.Error())
 		return
 	}
 	defer resp.Body.Close()
 
-	copyHeaders(w.Header(), resp.Header)
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	copyHeaders(writer.Header(), resp.Header)
+	writer.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(writer, resp.Body)
 }
 
 // Start runs the HTTP server.
-func (s *Server) Start() error {
-	s.server = &http.Server{
-		Addr:    s.cfg.ListenAddr,
-		Handler: s.mux,
+func (server *Server) Start() error {
+	server.server = &http.Server{
+		Addr:    server.cfg.ListenAddr,
+		Handler: server.mux,
 	}
-	return s.server.ListenAndServe()
+	return server.server.ListenAndServe()
 }
 
 // Stop gracefully shuts down the coordinator.
-func (s *Server) Stop(ctx context.Context) error {
-	if s.server != nil {
-		return s.server.Shutdown(ctx)
+func (server *Server) Stop(ctx context.Context) error {
+	if server.server != nil {
+		return server.server.Shutdown(ctx)
 	}
 	return nil
 }
 
 // ServeHTTP implements http.Handler for testing.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.mux.ServeHTTP(w, r)
+func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	server.mux.ServeHTTP(writer, request)
 }
 
 func copyHeaders(dst, src http.Header) {
@@ -405,14 +405,14 @@ func copyHeaders(dst, src http.Header) {
 	}
 }
 
-func writeJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(data)
+func writeJSON(writer http.ResponseWriter, status int, data any) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(status)
+	_ = json.NewEncoder(writer).Encode(data)
 }
 
-func writeError(w http.ResponseWriter, status int, msg, details string) {
-	writeJSON(w, status, api.ErrorResponse{
+func writeError(writer http.ResponseWriter, status int, msg, details string) {
+	writeJSON(writer, status, api.ErrorResponse{
 		Error:   msg,
 		Details: details,
 	})

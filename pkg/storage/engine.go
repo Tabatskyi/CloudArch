@@ -21,7 +21,7 @@ var (
 
 // TableStore maintains the schema and partition collections for a single table.
 type TableStore struct {
-	mu         sync.RWMutex
+	mutex      sync.RWMutex
 	Definition api.TableDefinition
 	Partitions map[string]*OrderedPartition
 }
@@ -33,29 +33,29 @@ func newTableStore(def api.TableDefinition) *TableStore {
 	}
 }
 
-func (ts *TableStore) getOrCreatePartition(pk string) *OrderedPartition {
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
+func (tableStore *TableStore) getOrCreatePartition(partitionKey string) *OrderedPartition {
+	tableStore.mutex.Lock()
+	defer tableStore.mutex.Unlock()
 
-	p, exists := ts.Partitions[pk]
+	partition, exists := tableStore.Partitions[partitionKey]
 	if !exists {
-		p = NewOrderedPartition()
-		ts.Partitions[pk] = p
+		partition = NewOrderedPartition()
+		tableStore.Partitions[partitionKey] = partition
 	}
-	return p
+	return partition
 }
 
-func (ts *TableStore) getPartition(pk string) (*OrderedPartition, bool) {
-	ts.mu.RLock()
-	defer ts.mu.RUnlock()
+func (tableStore *TableStore) getPartition(partitionKey string) (*OrderedPartition, bool) {
+	tableStore.mutex.RLock()
+	defer tableStore.mutex.RUnlock()
 
-	p, exists := ts.Partitions[pk]
+	p, exists := tableStore.Partitions[partitionKey]
 	return p, exists
 }
 
 // Engine is the central local storage engine managing multiple tables and their partitions.
 type Engine struct {
-	mu      sync.RWMutex
+	mutex   sync.RWMutex
 	dataDir string
 	tables  map[string]*TableStore
 }
@@ -72,51 +72,51 @@ func NewEngine(dataDir string) *Engine {
 }
 
 // CreateTable registers a new table schema.
-func (e *Engine) CreateTable(def api.TableDefinition) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (engine *Engine) CreateTable(def api.TableDefinition) error {
+	engine.mutex.Lock()
+	defer engine.mutex.Unlock()
 
 	if def.TableName == "" || def.PartitionKey == "" {
 		return errors.New("tableName and partitionKey are required")
 	}
 
-	if _, exists := e.tables[def.TableName]; exists {
+	if _, exists := engine.tables[def.TableName]; exists {
 		return ErrTableAlreadyExists
 	}
 
-	e.tables[def.TableName] = newTableStore(def)
+	engine.tables[def.TableName] = newTableStore(def)
 	return nil
 }
 
 // GetTable retrieves a table's schema.
-func (e *Engine) GetTable(name string) (api.TableDefinition, error) {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+func (engine *Engine) GetTable(name string) (api.TableDefinition, error) {
+	engine.mutex.RLock()
+	defer engine.mutex.RUnlock()
 
-	ts, exists := e.tables[name]
+	tableStore, exists := engine.tables[name]
 	if !exists {
 		return api.TableDefinition{}, ErrTableNotFound
 	}
-	return ts.Definition, nil
+	return tableStore.Definition, nil
 }
 
 // ListTables returns all registered table definitions.
-func (e *Engine) ListTables() []api.TableDefinition {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+func (engine *Engine) ListTables() []api.TableDefinition {
+	engine.mutex.RLock()
+	defer engine.mutex.RUnlock()
 
-	defs := make([]api.TableDefinition, 0, len(e.tables))
-	for _, ts := range e.tables {
-		defs = append(defs, ts.Definition)
+	defs := make([]api.TableDefinition, 0, len(engine.tables))
+	for _, tableStore := range engine.tables {
+		defs = append(defs, tableStore.Definition)
 	}
 	return defs
 }
 
 // PutRecord inserts or updates a record into the table.
-func (e *Engine) PutRecord(table string, rec api.Record) error {
-	e.mu.RLock()
-	ts, exists := e.tables[table]
-	e.mu.RUnlock()
+func (engine *Engine) PutRecord(table string, rec api.Record) error {
+	engine.mutex.RLock()
+	tableStore, exists := engine.tables[table]
+	engine.mutex.RUnlock()
 
 	if !exists {
 		return ErrTableNotFound
@@ -125,26 +125,26 @@ func (e *Engine) PutRecord(table string, rec api.Record) error {
 	if rec.PartitionKey == "" {
 		return ErrMissingPartitionKey
 	}
-	if ts.Definition.SortKey != "" && rec.SortKey == "" {
+	if tableStore.Definition.SortKey != "" && rec.SortKey == "" {
 		return ErrMissingSortKey
 	}
 
-	partition := ts.getOrCreatePartition(rec.PartitionKey)
+	partition := tableStore.getOrCreatePartition(rec.PartitionKey)
 	partition.Put(rec)
 	return nil
 }
 
 // GetRecord reads a record by partitionKey and sortKey.
-func (e *Engine) GetRecord(table, partitionKey, sortKey string) (api.Record, error) {
-	e.mu.RLock()
-	ts, exists := e.tables[table]
-	e.mu.RUnlock()
+func (engine *Engine) GetRecord(table, partitionKey, sortKey string) (api.Record, error) {
+	engine.mutex.RLock()
+	tableStore, exists := engine.tables[table]
+	engine.mutex.RUnlock()
 
 	if !exists {
 		return api.Record{}, ErrTableNotFound
 	}
 
-	partition, found := ts.getPartition(partitionKey)
+	partition, found := tableStore.getPartition(partitionKey)
 	if !found {
 		return api.Record{}, ErrRecordNotFound
 	}
@@ -157,16 +157,16 @@ func (e *Engine) GetRecord(table, partitionKey, sortKey string) (api.Record, err
 }
 
 // ExistsRecord checks if a record exists in the table.
-func (e *Engine) ExistsRecord(table, partitionKey, sortKey string) (bool, error) {
-	e.mu.RLock()
-	ts, exists := e.tables[table]
-	e.mu.RUnlock()
+func (engine *Engine) ExistsRecord(table, partitionKey, sortKey string) (bool, error) {
+	engine.mutex.RLock()
+	tableStore, exists := engine.tables[table]
+	engine.mutex.RUnlock()
 
 	if !exists {
 		return false, ErrTableNotFound
 	}
 
-	partition, found := ts.getPartition(partitionKey)
+	partition, found := tableStore.getPartition(partitionKey)
 	if !found {
 		return false, nil
 	}
@@ -175,16 +175,16 @@ func (e *Engine) ExistsRecord(table, partitionKey, sortKey string) (bool, error)
 }
 
 // DeleteRecord deletes a record from the table.
-func (e *Engine) DeleteRecord(table, partitionKey, sortKey string) error {
-	e.mu.RLock()
-	ts, exists := e.tables[table]
-	e.mu.RUnlock()
+func (engine *Engine) DeleteRecord(table, partitionKey, sortKey string) error {
+	engine.mutex.RLock()
+	tableStore, exists := engine.tables[table]
+	engine.mutex.RUnlock()
 
 	if !exists {
 		return ErrTableNotFound
 	}
 
-	partition, found := ts.getPartition(partitionKey)
+	partition, found := tableStore.getPartition(partitionKey)
 	if !found {
 		return nil // idempotent deletion
 	}
@@ -194,16 +194,16 @@ func (e *Engine) DeleteRecord(table, partitionKey, sortKey string) error {
 }
 
 // QueryPartition executes an intra-partition range scan.
-func (e *Engine) QueryPartition(table, partitionKey, sortKeyFrom, sortKeyTo string, limit int) ([]api.Record, error) {
-	e.mu.RLock()
-	ts, exists := e.tables[table]
-	e.mu.RUnlock()
+func (engine *Engine) QueryPartition(table, partitionKey, sortKeyFrom, sortKeyTo string, limit int) ([]api.Record, error) {
+	engine.mutex.RLock()
+	tableStore, exists := engine.tables[table]
+	engine.mutex.RUnlock()
 
 	if !exists {
 		return nil, ErrTableNotFound
 	}
 
-	partition, found := ts.getPartition(partitionKey)
+	partition, found := tableStore.getPartition(partitionKey)
 	if !found {
 		return []api.Record{}, nil
 	}
@@ -212,17 +212,17 @@ func (e *Engine) QueryPartition(table, partitionKey, sortKeyFrom, sortKeyTo stri
 }
 
 // TotalRecords returns the count of records across all tables.
-func (e *Engine) TotalRecords() int {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+func (engine *Engine) TotalRecords() int {
+	engine.mutex.RLock()
+	defer engine.mutex.RUnlock()
 
 	total := 0
-	for _, ts := range e.tables {
-		ts.mu.RLock()
-		for _, p := range ts.Partitions {
-			total += p.Count()
+	for _, tableStore := range engine.tables {
+		tableStore.mutex.RLock()
+		for _, partition := range tableStore.Partitions {
+			total += partition.Count()
 		}
-		ts.mu.RUnlock()
+		tableStore.mutex.RUnlock()
 	}
 	return total
 }
@@ -233,25 +233,25 @@ type snapshotData struct {
 }
 
 // Snapshot writes the in-memory state to disk in JSON format.
-func (e *Engine) Snapshot(filename string) error {
-	if e.dataDir == "" {
+func (engine *Engine) Snapshot(filename string) error {
+	if engine.dataDir == "" {
 		return nil
 	}
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	engine.mutex.RLock()
+	defer engine.mutex.RUnlock()
 
 	data := snapshotData{
-		Tables:  make([]api.TableDefinition, 0, len(e.tables)),
+		Tables:  make([]api.TableDefinition, 0, len(engine.tables)),
 		Records: make(map[string][]api.Record),
 	}
 
-	for tableName, ts := range e.tables {
-		data.Tables = append(data.Tables, ts.Definition)
-		ts.mu.RLock()
-		for _, p := range ts.Partitions {
-			data.Records[tableName] = append(data.Records[tableName], p.Range("", "", 1000000)...)
+	for tableName, tableStore := range engine.tables {
+		data.Tables = append(data.Tables, tableStore.Definition)
+		tableStore.mutex.RLock()
+		for _, partition := range tableStore.Partitions {
+			data.Records[tableName] = append(data.Records[tableName], partition.Range("", "", 1000000)...)
 		}
-		ts.mu.RUnlock()
+		tableStore.mutex.RUnlock()
 	}
 
 	raw, err := json.MarshalIndent(data, "", "  ")
@@ -259,16 +259,16 @@ func (e *Engine) Snapshot(filename string) error {
 		return fmt.Errorf("snapshot marshal error: %w", err)
 	}
 
-	target := filepath.Join(e.dataDir, filename)
+	target := filepath.Join(engine.dataDir, filename)
 	return os.WriteFile(target, raw, 0644)
 }
 
 // Restore loads an engine snapshot from disk.
-func (e *Engine) Restore(filename string) error {
-	if e.dataDir == "" {
+func (engine *Engine) Restore(filename string) error {
+	if engine.dataDir == "" {
 		return nil
 	}
-	target := filepath.Join(e.dataDir, filename)
+	target := filepath.Join(engine.dataDir, filename)
 	raw, err := os.ReadFile(target)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -282,12 +282,12 @@ func (e *Engine) Restore(filename string) error {
 		return fmt.Errorf("restore unmarshal error: %w", err)
 	}
 
-	for _, tbl := range data.Tables {
-		_ = e.CreateTable(tbl)
+	for _, table := range data.Tables {
+		_ = engine.CreateTable(table)
 	}
-	for tbl, recs := range data.Records {
+	for tableName, recs := range data.Records {
 		for _, r := range recs {
-			_ = e.PutRecord(tbl, r)
+			_ = engine.PutRecord(tableName, r)
 		}
 	}
 	return nil

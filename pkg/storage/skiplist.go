@@ -21,7 +21,7 @@ type skipNode struct {
 
 // OrderedPartition represents an ordered collection of records for a single partition key.
 type OrderedPartition struct {
-	mu     sync.RWMutex
+	mutex  sync.RWMutex
 	header *skipNode
 	level  int
 	count  int
@@ -38,7 +38,7 @@ func NewOrderedPartition() *OrderedPartition {
 	}
 }
 
-func (op *OrderedPartition) randomLevel() int {
+func (orderedPartition *OrderedPartition) randomLevel() int {
 	lvl := 1
 	for rand.Float64() < probability && lvl < maxLevel {
 		lvl++
@@ -47,14 +47,14 @@ func (op *OrderedPartition) randomLevel() int {
 }
 
 // Put inserts or updates a record identified by its sortKey.
-func (op *OrderedPartition) Put(rec api.Record) {
-	op.mu.Lock()
-	defer op.mu.Unlock()
+func (orderedPartition *OrderedPartition) Put(rec api.Record) {
+	orderedPartition.mutex.Lock()
+	defer orderedPartition.mutex.Unlock()
 
 	update := make([]*skipNode, maxLevel)
-	current := op.header
+	current := orderedPartition.header
 
-	for i := op.level - 1; i >= 0; i-- {
+	for i := orderedPartition.level - 1; i >= 0; i-- {
 		for current.forward[i] != nil && current.forward[i].sortKey < rec.SortKey {
 			current = current.forward[i]
 		}
@@ -69,12 +69,12 @@ func (op *OrderedPartition) Put(rec api.Record) {
 	}
 
 	// Insert new node
-	lvl := op.randomLevel()
-	if lvl > op.level {
-		for i := op.level; i < lvl; i++ {
-			update[i] = op.header
+	lvl := orderedPartition.randomLevel()
+	if lvl > orderedPartition.level {
+		for i := orderedPartition.level; i < lvl; i++ {
+			update[i] = orderedPartition.header
 		}
-		op.level = lvl
+		orderedPartition.level = lvl
 	}
 
 	newNode := &skipNode{
@@ -83,20 +83,20 @@ func (op *OrderedPartition) Put(rec api.Record) {
 		forward: make([]*skipNode, lvl),
 	}
 
-	for i := 0; i < lvl; i++ {
+	for i := range lvl {
 		newNode.forward[i] = update[i].forward[i]
 		update[i].forward[i] = newNode
 	}
-	op.count++
+	orderedPartition.count++
 }
 
 // Get retrieves a record by its sortKey.
-func (op *OrderedPartition) Get(sortKey string) (api.Record, bool) {
-	op.mu.RLock()
-	defer op.mu.RUnlock()
+func (orderedPartition *OrderedPartition) Get(sortKey string) (api.Record, bool) {
+	orderedPartition.mutex.RLock()
+	defer orderedPartition.mutex.RUnlock()
 
-	current := op.header
-	for i := op.level - 1; i >= 0; i-- {
+	current := orderedPartition.header
+	for i := orderedPartition.level - 1; i >= 0; i-- {
 		for current.forward[i] != nil && current.forward[i].sortKey < sortKey {
 			current = current.forward[i]
 		}
@@ -110,20 +110,20 @@ func (op *OrderedPartition) Get(sortKey string) (api.Record, bool) {
 }
 
 // Exists checks if a record with the sortKey exists.
-func (op *OrderedPartition) Exists(sortKey string) bool {
-	_, found := op.Get(sortKey)
+func (orderedPartition *OrderedPartition) Exists(sortKey string) bool {
+	_, found := orderedPartition.Get(sortKey)
 	return found
 }
 
 // Delete removes the record with the specified sortKey.
-func (op *OrderedPartition) Delete(sortKey string) bool {
-	op.mu.Lock()
-	defer op.mu.Unlock()
+func (orderedPartition *OrderedPartition) Delete(sortKey string) bool {
+	orderedPartition.mutex.Lock()
+	defer orderedPartition.mutex.Unlock()
 
 	update := make([]*skipNode, maxLevel)
-	current := op.header
+	current := orderedPartition.header
 
-	for i := op.level - 1; i >= 0; i-- {
+	for i := orderedPartition.level - 1; i >= 0; i-- {
 		for current.forward[i] != nil && current.forward[i].sortKey < sortKey {
 			current = current.forward[i]
 		}
@@ -135,35 +135,35 @@ func (op *OrderedPartition) Delete(sortKey string) bool {
 		return false
 	}
 
-	for i := 0; i < op.level; i++ {
+	for i := 0; i < orderedPartition.level; i++ {
 		if update[i].forward[i] != current {
 			break
 		}
 		update[i].forward[i] = current.forward[i]
 	}
 
-	for op.level > 1 && op.header.forward[op.level-1] == nil {
-		op.level--
+	for orderedPartition.level > 1 && orderedPartition.header.forward[orderedPartition.level-1] == nil {
+		orderedPartition.level--
 	}
 
-	op.count--
+	orderedPartition.count--
 	return true
 }
 
 // Range returns records matching optional sort key range boundaries [from, to] up to limit.
-func (op *OrderedPartition) Range(from, to string, limit int) []api.Record {
-	op.mu.RLock()
-	defer op.mu.RUnlock()
+func (orderedPartition *OrderedPartition) Range(from, to string, limit int) []api.Record {
+	orderedPartition.mutex.RLock()
+	defer orderedPartition.mutex.RUnlock()
 
 	if limit <= 0 {
 		limit = 100
 	}
 
 	var results []api.Record
-	current := op.header
+	current := orderedPartition.header
 
 	if from != "" {
-		for i := op.level - 1; i >= 0; i-- {
+		for i := orderedPartition.level - 1; i >= 0; i-- {
 			for current.forward[i] != nil && current.forward[i].sortKey < from {
 				current = current.forward[i]
 			}
@@ -185,18 +185,18 @@ func (op *OrderedPartition) Range(from, to string, limit int) []api.Record {
 }
 
 // Prefix returns records whose sortKey begins with prefix.
-func (op *OrderedPartition) Prefix(prefix string, limit int) []api.Record {
-	op.mu.RLock()
-	defer op.mu.RUnlock()
+func (orderedPartition *OrderedPartition) Prefix(prefix string, limit int) []api.Record {
+	orderedPartition.mutex.RLock()
+	defer orderedPartition.mutex.RUnlock()
 
 	if limit <= 0 {
 		limit = 100
 	}
 
 	var results []api.Record
-	current := op.header
+	current := orderedPartition.header
 
-	for i := op.level - 1; i >= 0; i-- {
+	for i := orderedPartition.level - 1; i >= 0; i-- {
 		for current.forward[i] != nil && current.forward[i].sortKey < prefix {
 			current = current.forward[i]
 		}
@@ -215,8 +215,8 @@ func (op *OrderedPartition) Prefix(prefix string, limit int) []api.Record {
 }
 
 // Count returns the number of records stored in this partition.
-func (op *OrderedPartition) Count() int {
-	op.mu.RLock()
-	defer op.mu.RUnlock()
-	return op.count
+func (orderedPartition *OrderedPartition) Count() int {
+	orderedPartition.mutex.RLock()
+	defer orderedPartition.mutex.RUnlock()
+	return orderedPartition.count
 }
