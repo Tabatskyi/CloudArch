@@ -34,7 +34,7 @@ resource "aws_instance" "coordinator" {
   associate_public_ip_address = true
   key_name                    = var.key_name
   vpc_security_group_ids      = [aws_security_group.coordinator.id]
-  iam_instance_profile        = "LabInstanceProfile"
+  iam_instance_profile        = var.iam_instance_profile
 
   root_block_device {
     volume_type           = "gp2"
@@ -93,7 +93,7 @@ resource "aws_instance" "shards" {
   associate_public_ip_address = false
   key_name                    = var.key_name
   vpc_security_group_ids      = [aws_security_group.shard.id]
-  iam_instance_profile        = "LabInstanceProfile"
+  iam_instance_profile        = var.iam_instance_profile
 
   root_block_device {
     volume_type           = "gp2"

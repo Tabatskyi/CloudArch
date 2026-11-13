@@ -22,6 +22,12 @@ variable "key_name" {
   default     = null
 }
 
+variable "iam_instance_profile" {
+  description = "Optional pre-provisioned IAM instance profile attached to EC2 instances"
+  type        = string
+  default     = null
+}
+
 variable "vpc_id" {
   description = "VPC ID where compute instances will reside"
   type        = string
