@@ -2,7 +2,7 @@
 resource "aws_security_group" "coordinator" {
   name        = "${var.environment}-kv-coordinator-sg"
   description = "Ingress rules for Coordinator REST API and SSH administration"
-  vpc_id      = var.vpc_id != null ? var.vpc_id : data.aws_vpc.default.id
+  vpc_id      = var.vpc_id != null ? var.vpc_id : data.aws_vpc.default[0].id
 
   # Public REST API client ingress
   ingress {
@@ -41,7 +41,7 @@ resource "aws_security_group" "coordinator" {
 resource "aws_security_group" "shard" {
   name        = "${var.environment}-kv-shard-sg"
   description = "Private subnet access for downstream storage shards"
-  vpc_id      = var.vpc_id != null ? var.vpc_id : data.aws_vpc.default.id
+  vpc_id      = var.vpc_id != null ? var.vpc_id : data.aws_vpc.default[0].id
 
   # Shard traffic strictly from Coordinator SG
   ingress {
@@ -77,5 +77,6 @@ resource "aws_security_group" "shard" {
 }
 
 data "aws_vpc" "default" {
-  default = var.vpc_id == null ? true : false
+  count   = var.vpc_id == null ? 1 : 0
+  default = true
 }

@@ -17,7 +17,7 @@ data "aws_ami" "al2023" {
 data "aws_subnets" "public" {
   filter {
     name   = "vpc-id"
-    values = [var.vpc_id != null ? var.vpc_id : data.aws_vpc.default.id]
+    values = [var.vpc_id != null ? var.vpc_id : data.aws_vpc.default[0].id]
   }
 }
 
