@@ -229,6 +229,9 @@ func toGRPCError(err error) error {
 	if err == nil {
 		return nil
 	}
+	if _, ok := status.FromError(err); ok {
+		return err
+	}
 	if errors.Is(err, storage.ErrTableNotFound) || errors.Is(err, storage.ErrRecordNotFound) {
 		return status.Errorf(codes.NotFound, "%v", err)
 	}

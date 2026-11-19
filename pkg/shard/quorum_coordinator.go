@@ -136,15 +136,36 @@ func (qc *QuorumCoordinator) ReplicateWrite(ctx context.Context, opType, table, 
 		Entries:  []*v1.LogEntry{entry},
 	}
 
-	for _, client := range peers {
-		go func(c v1.ReplicationServiceClient) {
-			resp, err := c.AppendEntries(quorumCtx, req)
+	for addr, client := range peers {
+		go func(peerAddr string, c v1.ReplicationServiceClient) {
+			rpcCtx, rpcCancel := context.WithTimeout(context.Background(), qc.timeout)
+			defer rpcCancel()
+
+			resp, err := c.AppendEntries(rpcCtx, req)
 			if err == nil && resp != nil && resp.Success {
 				ackChan <- true
-			} else {
-				ackChan <- false
+				return
 			}
-		}(client)
+
+			// If follower missed preceding entries (e.g. laggy or recovering), heal gap from leader WAL
+			if resp != nil && !resp.Success && resp.LastAppliedOffset < entry.Offset-1 && qc.wal != nil {
+				missing, readErr := qc.wal.ReadFrom(resp.LastAppliedOffset+1, int(entry.Offset-resp.LastAppliedOffset))
+				if readErr == nil && len(missing) > 0 {
+					catchUpReq := &v1.AppendEntriesRequest{
+						LeaderId: qc.nodeID,
+						Term:     1,
+						Entries:  missing,
+					}
+					retryResp, retryErr := c.AppendEntries(rpcCtx, catchUpReq)
+					if retryErr == nil && retryResp != nil && retryResp.Success {
+						ackChan <- true
+						return
+					}
+				}
+			}
+
+			ackChan <- false
+		}(addr, client)
 	}
 
 	// 5. Await required follower acks
