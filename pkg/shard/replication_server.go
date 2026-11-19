@@ -117,9 +117,9 @@ func (rs *ReplicationServer) AppendEntries(ctx context.Context, req *v1.AppendEn
 			lastOffset = rs.wal.LastOffset()
 		}
 		return &v1.AppendEntriesResponse{
-			ReplicaId:          rs.nodeID,
-			Success:            true,
-			LastAppliedOffset:  lastOffset,
+			ReplicaId:         rs.nodeID,
+			Success:           true,
+			LastAppliedOffset: lastOffset,
 		}, nil
 	}
 
@@ -231,8 +231,8 @@ func (rs *ReplicationServer) VerifyState(ctx context.Context, req *v1.VerifyStat
 	inSync, _ := storage.VerifyStateSync(currOffset, req.Offset, stateHash, req.StateHash)
 
 	return &v1.VerifyStateResponse{
-		InSync:           inSync,
-		LeaderOffset:     currOffset,
-		LeaderStateHash:  stateHash,
+		InSync:          inSync,
+		LeaderOffset:    currOffset,
+		LeaderStateHash: stateHash,
 	}, nil
 }

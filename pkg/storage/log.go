@@ -17,10 +17,10 @@ var (
 	// MagicHeader identifies the start of a valid WAL record frame (0xCAFE).
 	MagicHeader = [2]byte{0xCA, 0xFE}
 
-	ErrInvalidMagic    = errors.New("invalid log entry magic header")
+	ErrInvalidMagic     = errors.New("invalid log entry magic header")
 	ErrChecksumMismatch = errors.New("log entry CRC32 checksum mismatch")
-	ErrCorruptEntry    = errors.New("corrupt log entry")
-	ErrInvalidOffset   = errors.New("log entry offset is not monotonic")
+	ErrCorruptEntry     = errors.New("corrupt log entry")
+	ErrInvalidOffset    = errors.New("log entry offset is not monotonic")
 )
 
 // LogEntry is the core replication log record.

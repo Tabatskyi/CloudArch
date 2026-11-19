@@ -13,7 +13,7 @@ import (
 
 var (
 	ErrOffsetMismatch = errors.New("append offset mismatch: offsets must be strictly monotonic")
-	ErrWALClosed       = errors.New("WAL is closed")
+	ErrWALClosed      = errors.New("WAL is closed")
 )
 
 // WAL represents a durable append-only Write-Ahead Log.
