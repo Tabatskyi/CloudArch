@@ -177,7 +177,9 @@ func (orderedPartition *OrderedPartition) Range(from, to string, limit int) []ap
 		if to != "" && current.sortKey > to {
 			break
 		}
-		results = append(results, current.record)
+		if !current.record.IsTombstone {
+			results = append(results, current.record)
+		}
 		current = current.forward[0]
 	}
 
@@ -207,7 +209,9 @@ func (orderedPartition *OrderedPartition) Prefix(prefix string, limit int) []api
 		if !strings.HasPrefix(current.sortKey, prefix) {
 			break
 		}
-		results = append(results, current.record)
+		if !current.record.IsTombstone {
+			results = append(results, current.record)
+		}
 		current = current.forward[0]
 	}
 
@@ -219,4 +223,19 @@ func (orderedPartition *OrderedPartition) Count() int {
 	orderedPartition.mutex.RLock()
 	defer orderedPartition.mutex.RUnlock()
 	return orderedPartition.count
+}
+
+// ActiveCount returns the number of active (non-tombstone) records stored in this partition.
+func (orderedPartition *OrderedPartition) ActiveCount() int {
+	orderedPartition.mutex.RLock()
+	defer orderedPartition.mutex.RUnlock()
+	count := 0
+	current := orderedPartition.header.forward[0]
+	for current != nil {
+		if !current.record.IsTombstone {
+			count++
+		}
+		current = current.forward[0]
+	}
+	return count
 }

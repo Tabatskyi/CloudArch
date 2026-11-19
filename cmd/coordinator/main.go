@@ -17,6 +17,8 @@ func main() {
 	var (
 		port   = flag.Int("port", 8080, "Port for coordinator HTTP server")
 		vnodes = flag.Int("vnodes", 200, "Number of virtual nodes per physical shard")
+		wq     = flag.Int("write-quorum", 2, "Write quorum requirement (W)")
+		rq     = flag.Int("read-quorum", 2, "Read quorum requirement (R)")
 	)
 	flag.Parse()
 
@@ -24,6 +26,8 @@ func main() {
 	cfg := coordinator.Config{
 		ListenAddr:   listenAddr,
 		VirtualNodes: *vnodes,
+		WriteQuorum:  *wq,
+		ReadQuorum:   *rq,
 	}
 
 	server := coordinator.NewServer(cfg)

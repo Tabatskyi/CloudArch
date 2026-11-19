@@ -64,6 +64,24 @@ variable "shard_port" {
   default     = 8081
 }
 
+variable "grpc_port" {
+  description = "TCP port for internal gRPC replication and shard service"
+  type        = number
+  default     = 9091
+}
+
+variable "shard_group_count" {
+  description = "Number of distinct partition shard groups"
+  type        = number
+  default     = 2
+}
+
+variable "replicas_per_group" {
+  description = "Number of replicas per shard group (N=3)"
+  type        = number
+  default     = 3
+}
+
 variable "virtual_nodes" {
   description = "Virtual nodes per physical shard on consistent hash ring"
   type        = number

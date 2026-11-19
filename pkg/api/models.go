@@ -16,6 +16,9 @@ type Record struct {
 	PartitionKey string `json:"partitionKey"`
 	SortKey      string `json:"sortKey,omitempty"`
 	Value        any    `json:"value"`
+	Version      uint64 `json:"version,omitempty"`
+	Timestamp    int64  `json:"timestamp,omitempty"`
+	IsTombstone  bool   `json:"isTombstone,omitempty"`
 }
 
 // RecordResponse is returned on successful write operations.
@@ -25,18 +28,27 @@ type RecordResponse struct {
 	Table        string `json:"table"`
 	PartitionKey string `json:"partitionKey"`
 	SortKey      string `json:"sortKey,omitempty"`
+	Version      uint64 `json:"version,omitempty"`
 }
 
 // ShardRegistration is sent by a shard upon startup.
 type ShardRegistration struct {
 	ShardID      string `json:"shardId"`
-	Address      string `json:"address"`
+	ReplicaID    string `json:"replicaId,omitempty"`
+	Role         string `json:"role,omitempty"`
+	GRPCAddress  string `json:"grpcAddress,omitempty"`
+	HTTPAddress  string `json:"httpAddress,omitempty"`
+	Address      string `json:"address,omitempty"`
 	VirtualNodes int    `json:"virtualNodes,omitempty"`
 }
 
 // ShardInfo represents an active shard registered on the coordinator.
 type ShardInfo struct {
 	ShardID      string    `json:"shardId"`
+	ReplicaID    string    `json:"replicaId,omitempty"`
+	Role         string    `json:"role,omitempty"`
+	GRPCAddress  string    `json:"grpcAddress,omitempty"`
+	HTTPAddress  string    `json:"httpAddress,omitempty"`
 	Address      string    `json:"address"`
 	Status       string    `json:"status"`
 	RegisteredAt time.Time `json:"registeredAt"`
@@ -44,10 +56,15 @@ type ShardInfo struct {
 
 // HealthStatus reports service health.
 type HealthStatus struct {
-	Status        string `json:"status"`
-	NodeID        string `json:"nodeId"`
-	UptimeSeconds int64  `json:"uptimeSeconds"`
-	ActiveShards  int    `json:"activeShards,omitempty"`
+	Status         string `json:"status"`
+	NodeID         string `json:"nodeId"`
+	ReplicaID      string `json:"replicaId,omitempty"`
+	Role           string `json:"role,omitempty"`
+	AppliedOffset  uint64 `json:"appliedOffset,omitempty"`
+	ReplicationLag uint64 `json:"replicationLag,omitempty"`
+	RecordCount    int    `json:"recordCount,omitempty"`
+	UptimeSeconds  int64  `json:"uptimeSeconds"`
+	ActiveShards   int    `json:"activeShards,omitempty"`
 }
 
 // ErrorResponse describes an API error.

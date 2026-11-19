@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package cloudarch.v1;
+
+option go_package = "github.com/vasenka88/cloudarch/pkg/proto/v1;v1";
+
+// ReplicationService defines internal replication operations between Leader and Followers.
+service ReplicationService {
+  // Streaming WAL consumption for real-time follower replication
+  rpc StreamLog(StreamLogRequest) returns (stream LogEntry);
+  // Synchronous append RPC for write quorum coordination (W=2)
+  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+  // Batch catch-up resynchronization for lagging or restarted followers
+  rpc SyncRange(SyncRangeRequest) returns (SyncRangeResponse);
+  // Anti-entropy state verification
+  rpc VerifyState(VerifyStateRequest) returns (VerifyStateResponse);
+}
+
+message LogEntry {
+  uint64 offset = 1;
+  uint64 term = 2;
+  int64 timestamp = 3;
+  string op_type = 4; // "CREATE", "PUT", "DELETE"
+  string table = 5;
+  string partition_key = 6;
+  string sort_key = 7;
+  bytes value = 8;
+  uint32 checksum = 9;
+}
+
+message StreamLogRequest {
+  string replica_id = 1;
+  uint64 from_offset = 2;
+}
+
+message AppendEntriesRequest {
+  string leader_id = 1;
+  uint64 term = 2;
+  repeated LogEntry entries = 3;
+}
+
+message AppendEntriesResponse {
+  string replica_id = 1;
+  bool success = 2;
+  uint64 last_applied_offset = 3;
+  string error_message = 4;
+}
+
+message SyncRangeRequest {
+  string replica_id = 1;
+  uint64 from_offset = 2;
+  uint64 to_offset = 3;
+  uint32 limit = 4;
+}
+
+message SyncRangeResponse {
+  repeated LogEntry entries = 1;
+  uint64 current_leader_offset = 2;
+  bool has_more = 3;
+}
+
+message VerifyStateRequest {
+  string replica_id = 1;
+  uint64 offset = 2;
+  string state_hash = 3;
+}
+
+message VerifyStateResponse {
+  bool in_sync = 1;
+  uint64 leader_offset = 2;
+  string leader_state_hash = 3;
+}

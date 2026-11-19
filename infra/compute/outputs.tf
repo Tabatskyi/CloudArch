@@ -13,12 +13,24 @@ output "coordinator_api_endpoint" {
   value       = "http://${aws_instance.coordinator.public_ip}:${var.coordinator_port}"
 }
 
+output "shard_replicas" {
+  description = "Provisioned multi-replica storage shards (2 groups x 3 replicas)"
+  value = {
+    for k, inst in aws_instance.shards : k => {
+      group_id   = inst.tags["ShardID"]
+      replica_id = inst.tags["ReplicaID"]
+      role       = inst.tags["Role"]
+      private_ip = inst.private_ip
+    }
+  }
+}
+
 output "shard_private_ips" {
   description = "Private IPv4 addresses of downstream Storage Shard instances"
-  value       = aws_instance.shards[*].private_ip
+  value       = [for inst in aws_instance.shards : inst.private_ip]
 }
 
 output "shard_ids" {
-  description = "Identifiers of provisioned storage shards"
-  value       = [for idx in range(length(aws_instance.shards)) : "shard-${idx + 1}"]
+  description = "Identifiers of provisioned storage shard groups"
+  value       = [for g in range(var.shard_group_count) : "shard-${g + 1}"]
 }

@@ -22,6 +22,11 @@ func setupTestServer() *Server {
 
 func TestShardHealthz(t *testing.T) {
 	s := setupTestServer()
+
+	// Seed one record into engine
+	_ = s.Engine().CreateTable(api.TableDefinition{TableName: "kv", PartitionKey: "pk"})
+	_ = s.Engine().PutRecord("kv", api.Record{PartitionKey: "p1", Value: "val"})
+
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 
@@ -37,6 +42,15 @@ func TestShardHealthz(t *testing.T) {
 	}
 	if status.NodeID != "test-shard-1" || status.Status != "ok" {
 		t.Fatalf("unexpected health payload: %+v", status)
+	}
+	if status.Role != "leader" {
+		t.Errorf("expected role leader, got %s", status.Role)
+	}
+	if status.ReplicaID != "test-shard-1" {
+		t.Errorf("expected replicaId test-shard-1, got %s", status.ReplicaID)
+	}
+	if status.RecordCount != 1 {
+		t.Errorf("expected RecordCount 1, got %d", status.RecordCount)
 	}
 }
 
@@ -160,5 +174,65 @@ func TestShardRegistrationMock(t *testing.T) {
 	}
 	if !registered {
 		t.Fatalf("expected coordinator to receive registration")
+	}
+}
+
+func TestShardRoleConfiguration(t *testing.T) {
+	// Test Default Role (leader)
+	sDefault := NewServer(Config{ShardID: "shard-1"})
+	if sDefault.Config().Role != "leader" {
+		t.Errorf("expected default role leader, got %s", sDefault.Config().Role)
+	}
+	if sDefault.Config().ReplicaID != "shard-1" {
+		t.Errorf("expected default replicaId shard-1, got %s", sDefault.Config().ReplicaID)
+	}
+
+	// Test Follower Role with custom replica ID and addresses
+	var receivedReg api.ShardRegistration
+	coordMux := http.NewServeMux()
+	coordMux.HandleFunc("/internal/v1/shards", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&receivedReg)
+		w.WriteHeader(http.StatusOK)
+	})
+	mockCoord := httptest.NewServer(coordMux)
+	defer mockCoord.Close()
+
+	sFollower := NewServer(Config{
+		ShardID:           "shard-1",
+		ReplicaID:         "replica-2",
+		Role:              "follower",
+		ListenAddr:        ":8082",
+		AdvertiseAddr:     "10.0.10.11:8082",
+		GRPCListenAddr:    ":9092",
+		GRPCAdvertiseAddr: "10.0.10.11:9092",
+		CoordinatorURL:    mockCoord.URL,
+	})
+
+	if sFollower.Config().Role != "follower" {
+		t.Errorf("expected role follower, got %s", sFollower.Config().Role)
+	}
+	if sFollower.Config().ReplicaID != "replica-2" {
+		t.Errorf("expected replicaId replica-2, got %s", sFollower.Config().ReplicaID)
+	}
+
+	err := sFollower.RegisterWithCoordinator(context.Background())
+	if err != nil {
+		t.Fatalf("registration failed: %v", err)
+	}
+
+	if receivedReg.ShardID != "shard-1" {
+		t.Errorf("expected shardId shard-1, got %s", receivedReg.ShardID)
+	}
+	if receivedReg.ReplicaID != "replica-2" {
+		t.Errorf("expected replicaId replica-2, got %s", receivedReg.ReplicaID)
+	}
+	if receivedReg.Role != "follower" {
+		t.Errorf("expected role follower, got %s", receivedReg.Role)
+	}
+	if receivedReg.GRPCAddress != "10.0.10.11:9092" {
+		t.Errorf("expected grpcAddress 10.0.10.11:9092, got %s", receivedReg.GRPCAddress)
+	}
+	if receivedReg.HTTPAddress != "10.0.10.11:8082" {
+		t.Errorf("expected httpAddress 10.0.10.11:8082, got %s", receivedReg.HTTPAddress)
 	}
 }

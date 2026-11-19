@@ -215,3 +215,105 @@ func TestSnapshotAndRestore(t *testing.T) {
 		t.Fatalf("failed to read restored record: %+v, err: %v", rec, err)
 	}
 }
+
+func TestRecordVersioningAndTombstones(t *testing.T) {
+	eng := NewEngine("")
+	_ = eng.CreateTable(api.TableDefinition{
+		TableName:    "kv",
+		PartitionKey: "pk",
+		SortKey:      "sk",
+	})
+
+	// 1. Initial Put
+	err := eng.PutRecord("kv", api.Record{
+		PartitionKey: "user#1",
+		SortKey:      "meta",
+		Value:        "first_value",
+	})
+	if err != nil {
+		t.Fatalf("first put failed: %v", err)
+	}
+
+	rec, err := eng.GetRecord("kv", "user#1", "meta")
+	if err != nil {
+		t.Fatalf("get record failed: %v", err)
+	}
+	if rec.Version != 1 {
+		t.Errorf("expected version 1, got %d", rec.Version)
+	}
+	if rec.Timestamp == 0 {
+		t.Error("expected non-zero timestamp")
+	}
+	if rec.IsTombstone {
+		t.Error("expected IsTombstone to be false")
+	}
+
+	// 2. Second Put (auto-increment version)
+	err = eng.PutRecord("kv", api.Record{
+		PartitionKey: "user#1",
+		SortKey:      "meta",
+		Value:        "second_value",
+	})
+	if err != nil {
+		t.Fatalf("second put failed: %v", err)
+	}
+
+	rec2, err := eng.GetRecord("kv", "user#1", "meta")
+	if err != nil {
+		t.Fatalf("get record 2 failed: %v", err)
+	}
+	if rec2.Version != 2 {
+		t.Errorf("expected version 2, got %d", rec2.Version)
+	}
+
+	// 3. Delete marks tombstone with version 3
+	err = eng.DeleteRecord("kv", "user#1", "meta")
+	if err != nil {
+		t.Fatalf("delete record failed: %v", err)
+	}
+
+	// GetRecord should return ErrRecordNotFound
+	_, err = eng.GetRecord("kv", "user#1", "meta")
+	if err != ErrRecordNotFound {
+		t.Fatalf("expected ErrRecordNotFound, got %v", err)
+	}
+
+	// ExistsRecord should return false
+	exists, err := eng.ExistsRecord("kv", "user#1", "meta")
+	if err != nil || exists {
+		t.Fatalf("expected exists=false, got %v, err=%v", exists, err)
+	}
+
+	// GetRawRecord should return the tombstone with version 3
+	raw, err := eng.GetRawRecord("kv", "user#1", "meta")
+	if err != nil {
+		t.Fatalf("get raw record failed: %v", err)
+	}
+	if !raw.IsTombstone {
+		t.Error("expected raw record to be tombstone")
+	}
+	if raw.Version != 3 {
+		t.Errorf("expected tombstone version 3, got %d", raw.Version)
+	}
+
+	// 4. Overwrite tombstone with higher version
+	err = eng.PutRecord("kv", api.Record{
+		PartitionKey: "user#1",
+		SortKey:      "meta",
+		Value:        "third_value",
+	})
+	if err != nil {
+		t.Fatalf("third put failed: %v", err)
+	}
+
+	rec3, err := eng.GetRecord("kv", "user#1", "meta")
+	if err != nil {
+		t.Fatalf("get record 3 failed: %v", err)
+	}
+	if rec3.Version != 4 {
+		t.Errorf("expected version 4, got %d", rec3.Version)
+	}
+	if rec3.IsTombstone {
+		t.Error("expected IsTombstone to be false after new put")
+	}
+}

@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package cloudarch.v1;
+
+option go_package = "github.com/vasenka88/cloudarch/pkg/proto/v1;v1";
+
+// ShardService defines internal shard operations invoked by the Coordinator.
+service ShardService {
+  rpc GetRecord(GetRecordRequest) returns (RecordResponse);
+  rpc PutRecord(PutRecordRequest) returns (RecordResponse);
+  rpc DeleteRecord(DeleteRecordRequest) returns (DeleteRecordResponse);
+  rpc QueryRecords(QueryRecordsRequest) returns (QueryRecordsResponse);
+}
+
+message GetRecordRequest {
+  string table = 1;
+  string partition_key = 2;
+  string sort_key = 3;
+}
+
+message PutRecordRequest {
+  string table = 1;
+  string partition_key = 2;
+  string sort_key = 3;
+  bytes value = 4;
+}
+
+message DeleteRecordRequest {
+  string table = 1;
+  string partition_key = 2;
+  string sort_key = 3;
+}
+
+message DeleteRecordResponse {
+  bool success = 1;
+  uint64 version = 2;
+  int64 timestamp = 3;
+}
+
+message QueryRecordsRequest {
+  string table = 1;
+  string partition_key = 2;
+  string prefix = 3;
+  int32 limit = 4;
+}
+
+message RecordResponse {
+  string table = 1;
+  string partition_key = 2;
+  string sort_key = 3;
+  bytes value = 4;
+  uint64 version = 5;
+  int64 timestamp = 6;
+  bool is_tombstone = 7;
+}
+
+message QueryRecordsResponse {
+  repeated RecordResponse records = 1;
+}

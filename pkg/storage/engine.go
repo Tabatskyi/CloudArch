@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/vasenka88/cloudarch/pkg/api"
 )
@@ -112,7 +113,7 @@ func (engine *Engine) ListTables() []api.TableDefinition {
 	return defs
 }
 
-// PutRecord inserts or updates a record into the table.
+// PutRecord inserts or updates a record into the table with monotonic versioning.
 func (engine *Engine) PutRecord(table string, rec api.Record) error {
 	engine.mutex.RLock()
 	tableStore, exists := engine.tables[table]
@@ -130,12 +131,37 @@ func (engine *Engine) PutRecord(table string, rec api.Record) error {
 	}
 
 	partition := tableStore.getOrCreatePartition(rec.PartitionKey)
+	if existing, found := partition.Get(rec.SortKey); found {
+		if rec.Version == 0 {
+			rec.Version = existing.Version + 1
+		}
+	} else if rec.Version == 0 {
+		rec.Version = 1
+	}
+
+	if rec.Timestamp == 0 {
+		rec.Timestamp = time.Now().UnixNano()
+	}
+	rec.IsTombstone = false
+
 	partition.Put(rec)
 	return nil
 }
 
-// GetRecord reads a record by partitionKey and sortKey.
+// GetRecord reads an active record by partitionKey and sortKey.
 func (engine *Engine) GetRecord(table, partitionKey, sortKey string) (api.Record, error) {
+	rec, err := engine.GetRawRecord(table, partitionKey, sortKey)
+	if err != nil {
+		return api.Record{}, err
+	}
+	if rec.IsTombstone {
+		return api.Record{}, ErrRecordNotFound
+	}
+	return rec, nil
+}
+
+// GetRawRecord reads a record by partitionKey and sortKey, including tombstones.
+func (engine *Engine) GetRawRecord(table, partitionKey, sortKey string) (api.Record, error) {
 	engine.mutex.RLock()
 	tableStore, exists := engine.tables[table]
 	engine.mutex.RUnlock()
@@ -156,26 +182,25 @@ func (engine *Engine) GetRecord(table, partitionKey, sortKey string) (api.Record
 	return rec, nil
 }
 
-// ExistsRecord checks if a record exists in the table.
+// ExistsRecord checks if an active record exists in the table.
 func (engine *Engine) ExistsRecord(table, partitionKey, sortKey string) (bool, error) {
-	engine.mutex.RLock()
-	tableStore, exists := engine.tables[table]
-	engine.mutex.RUnlock()
-
-	if !exists {
-		return false, ErrTableNotFound
+	rec, err := engine.GetRawRecord(table, partitionKey, sortKey)
+	if err != nil {
+		if errors.Is(err, ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
 	}
-
-	partition, found := tableStore.getPartition(partitionKey)
-	if !found {
-		return false, nil
-	}
-
-	return partition.Exists(sortKey), nil
+	return !rec.IsTombstone, nil
 }
 
-// DeleteRecord deletes a record from the table.
+// DeleteRecord marks a record as a tombstone with incremented version.
 func (engine *Engine) DeleteRecord(table, partitionKey, sortKey string) error {
+	return engine.DeleteRecordWithVersion(table, partitionKey, sortKey, 0, 0)
+}
+
+// DeleteRecordWithVersion marks a record as a tombstone with explicit version and timestamp.
+func (engine *Engine) DeleteRecordWithVersion(table, partitionKey, sortKey string, version uint64, ts int64) error {
 	engine.mutex.RLock()
 	tableStore, exists := engine.tables[table]
 	engine.mutex.RUnlock()
@@ -184,12 +209,29 @@ func (engine *Engine) DeleteRecord(table, partitionKey, sortKey string) error {
 		return ErrTableNotFound
 	}
 
-	partition, found := tableStore.getPartition(partitionKey)
-	if !found {
-		return nil // idempotent deletion
+	partition := tableStore.getOrCreatePartition(partitionKey)
+	existing, found := partition.Get(sortKey)
+	if found {
+		if version == 0 {
+			version = existing.Version + 1
+		}
+	} else if version == 0 {
+		version = 1
 	}
 
-	partition.Delete(sortKey)
+	if ts == 0 {
+		ts = time.Now().UnixNano()
+	}
+
+	tombstone := api.Record{
+		PartitionKey: partitionKey,
+		SortKey:      sortKey,
+		Value:        nil,
+		Version:      version,
+		Timestamp:    ts,
+		IsTombstone:  true,
+	}
+	partition.Put(tombstone)
 	return nil
 }
 
@@ -211,7 +253,7 @@ func (engine *Engine) QueryPartition(table, partitionKey, sortKeyFrom, sortKeyTo
 	return partition.Range(sortKeyFrom, sortKeyTo, limit), nil
 }
 
-// TotalRecords returns the count of records across all tables.
+// TotalRecords returns the count of active records across all tables.
 func (engine *Engine) TotalRecords() int {
 	engine.mutex.RLock()
 	defer engine.mutex.RUnlock()
@@ -220,7 +262,7 @@ func (engine *Engine) TotalRecords() int {
 	for _, tableStore := range engine.tables {
 		tableStore.mutex.RLock()
 		for _, partition := range tableStore.Partitions {
-			total += partition.Count()
+			total += partition.ActiveCount()
 		}
 		tableStore.mutex.RUnlock()
 	}

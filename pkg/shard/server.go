@@ -6,32 +6,53 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
+
 	"github.com/vasenka88/cloudarch/pkg/api"
+	v1 "github.com/vasenka88/cloudarch/pkg/proto/v1"
 	"github.com/vasenka88/cloudarch/pkg/storage"
 )
 
 // Config configures the shard service.
 type Config struct {
-	ShardID        string
-	ListenAddr     string
-	AdvertiseAddr  string
-	CoordinatorURL string
-	DataDir        string
-	VirtualNodes   int
+	ShardID           string
+	ReplicaID         string
+	Role              string // "leader" or "follower"
+	ListenAddr        string
+	AdvertiseAddr     string
+	GRPCListenAddr    string
+	GRPCAdvertiseAddr string
+	LeaderAddr        string   // Leader gRPC address for followers
+	Peers             []string // Peer replica gRPC addresses for leader
+	CoordinatorURL    string
+	DataDir           string
+	VirtualNodes      int
+	WriteQuorum       int
+	ReadQuorum        int
 }
 
-// Server is the HTTP server for a storage shard.
+// Server is the HTTP and gRPC server for a storage shard.
 type Server struct {
-	cfg       Config
-	engine    *storage.Engine
-	mux       *http.ServeMux
-	server    *http.Server
-	startTime time.Time
+	cfg          Config
+	engine       *storage.Engine
+	wal          *storage.WAL
+	replClient   *ReplicationClient
+	replServer   *ReplicationServer
+	quorumCoord  *QuorumCoordinator
+	shardGRPC    *ShardGRPCServer
+	grpcServer   *grpc.Server
+	grpcListener net.Listener
+	mux          *http.ServeMux
+	server       *http.Server
+	startTime    time.Time
 }
 
 // NewServer creates a new shard HTTP server instance.
@@ -39,9 +60,29 @@ func NewServer(cfg Config) *Server {
 	if cfg.VirtualNodes <= 0 {
 		cfg.VirtualNodes = 200
 	}
+	if cfg.Role == "" {
+		cfg.Role = "leader"
+	}
+	if cfg.ReplicaID == "" {
+		cfg.ReplicaID = cfg.ShardID
+	}
 	if cfg.AdvertiseAddr == "" {
 		cfg.AdvertiseAddr = cfg.ListenAddr
 	}
+	if cfg.GRPCListenAddr == "" {
+		cfg.GRPCListenAddr = ":9091"
+	}
+	if cfg.GRPCAdvertiseAddr == "" {
+		cfg.GRPCAdvertiseAddr = cfg.GRPCListenAddr
+	}
+	if cfg.WriteQuorum <= 0 {
+		cfg.WriteQuorum = 2
+	}
+	if cfg.ReadQuorum <= 0 {
+		cfg.ReadQuorum = 2
+	}
+
+	log.Printf("[shard:%s/replica:%s] role: %s, gRPC: %s, HTTP: %s", cfg.ShardID, cfg.ReplicaID, cfg.Role, cfg.GRPCAdvertiseAddr, cfg.AdvertiseAddr)
 
 	engine := storage.NewEngine(cfg.DataDir)
 	server := &Server{
@@ -52,6 +93,11 @@ func NewServer(cfg Config) *Server {
 	}
 	server.registerRoutes()
 	return server
+}
+
+// Config returns the shard configuration.
+func (server *Server) Config() Config {
+	return server.cfg
 }
 
 // Engine returns the underlying storage engine.
@@ -71,10 +117,27 @@ func (server *Server) handleHealthz(writer http.ResponseWriter, request *http.Re
 		return
 	}
 
+	var appliedOffset uint64
+	if server.wal != nil {
+		appliedOffset = server.wal.LastOffset()
+	} else if server.replClient != nil {
+		appliedOffset = server.replClient.LastAppliedOffset()
+	}
+
+	recordCount := 0
+	if server.engine != nil {
+		recordCount = server.engine.TotalRecords()
+	}
+
 	status := api.HealthStatus{
-		Status:        "ok",
-		NodeID:        server.cfg.ShardID,
-		UptimeSeconds: int64(time.Since(server.startTime).Seconds()),
+		Status:         "ok",
+		NodeID:         server.cfg.ShardID,
+		ReplicaID:      server.cfg.ReplicaID,
+		Role:           server.cfg.Role,
+		AppliedOffset:  appliedOffset,
+		ReplicationLag: 0,
+		RecordCount:    recordCount,
+		UptimeSeconds:  int64(time.Since(server.startTime).Seconds()),
 	}
 	writeJSON(writer, http.StatusOK, status)
 }
@@ -279,6 +342,10 @@ func (server *Server) RegisterWithCoordinator(ctx context.Context) error {
 
 	regPayload := api.ShardRegistration{
 		ShardID:      server.cfg.ShardID,
+		ReplicaID:    server.cfg.ReplicaID,
+		Role:         server.cfg.Role,
+		GRPCAddress:  server.cfg.GRPCAdvertiseAddr,
+		HTTPAddress:  server.cfg.AdvertiseAddr,
 		Address:      server.cfg.AdvertiseAddr,
 		VirtualNodes: server.cfg.VirtualNodes,
 	}
@@ -344,8 +411,90 @@ func (server *Server) Start() error {
 	return server.server.ListenAndServe()
 }
 
+// SetWAL configures the storage WAL on the server.
+func (server *Server) SetWAL(wal *storage.WAL) {
+	server.wal = wal
+}
+
+// SetReplicationClient configures the follower replication client.
+func (server *Server) SetReplicationClient(rc *ReplicationClient) {
+	server.replClient = rc
+}
+
+// SetQuorumCoordinator configures the leader write quorum coordinator.
+func (server *Server) SetQuorumCoordinator(qc *QuorumCoordinator) {
+	server.quorumCoord = qc
+	if server.shardGRPC != nil {
+		var replicator WriteReplicator
+		if qc != nil {
+			replicator = qc
+		}
+		server.shardGRPC.SetReplicator(replicator)
+	}
+}
+
+// SetReplicationServer configures the gRPC replication service on the leader.
+func (server *Server) SetReplicationServer(rs *ReplicationServer) {
+	server.replServer = rs
+}
+
+// StartGRPC begins serving gRPC traffic for ShardService, ReplicationService, and Health.
+func (server *Server) StartGRPC() error {
+	lis, err := net.Listen("tcp", server.cfg.GRPCListenAddr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on gRPC %s: %w", server.cfg.GRPCListenAddr, err)
+	}
+	server.grpcListener = lis
+	server.cfg.GRPCAdvertiseAddr = lis.Addr().String()
+
+	server.grpcServer = grpc.NewServer()
+	var replicator WriteReplicator
+	if server.quorumCoord != nil {
+		replicator = server.quorumCoord
+	}
+	server.shardGRPC = NewShardGRPCServer(server.engine, replicator)
+	v1.RegisterShardServiceServer(server.grpcServer, server.shardGRPC)
+
+	if server.replServer != nil {
+		v1.RegisterReplicationServiceServer(server.grpcServer, server.replServer)
+	}
+
+	// Register standard gRPC health service
+	healthServer := health.NewServer()
+	healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+	grpc_health_v1.RegisterHealthServer(server.grpcServer, healthServer)
+
+	go func() {
+		if err := server.grpcServer.Serve(lis); err != nil && err != grpc.ErrServerStopped {
+			log.Printf("[shard:%s] gRPC serve error: %v", server.cfg.ShardID, err)
+		}
+	}()
+
+	return nil
+}
+
+// GRPCAddr returns the bound gRPC listening address.
+func (server *Server) GRPCAddr() string {
+	if server.grpcListener != nil {
+		return server.grpcListener.Addr().String()
+	}
+	return server.cfg.GRPCAdvertiseAddr
+}
+
 // Stop gracefully shuts down the server.
 func (server *Server) Stop(ctx context.Context) error {
+	if server.grpcServer != nil {
+		server.grpcServer.GracefulStop()
+	}
+	if server.quorumCoord != nil {
+		_ = server.quorumCoord.Close()
+	}
+	if server.replClient != nil {
+		_ = server.replClient.Close()
+	}
+	if server.wal != nil {
+		_ = server.wal.Close()
+	}
 	if server.server != nil {
 		return server.server.Shutdown(ctx)
 	}

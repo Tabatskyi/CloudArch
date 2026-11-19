@@ -52,6 +52,24 @@ resource "aws_security_group" "shard" {
     security_groups = [aws_security_group.coordinator.id]
   }
 
+  # Inbound gRPC from Coordinator
+  ingress {
+    description     = "Inbound gRPC queries and write mutations from coordinator"
+    from_port       = var.grpc_port
+    to_port         = var.grpc_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.coordinator.id]
+  }
+
+  # Inbound gRPC replication between shard peers
+  ingress {
+    description = "Inbound gRPC streaming replication and sync between shard replica peers"
+    from_port   = var.grpc_port
+    to_port     = var.grpc_port
+    protocol    = "tcp"
+    self        = true
+  }
+
   # SSH jump from Coordinator bastion
   ingress {
     description     = "SSH access strictly from coordinator"

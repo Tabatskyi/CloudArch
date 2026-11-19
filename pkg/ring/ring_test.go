@@ -155,3 +155,51 @@ func TestMurmur3Coverage(t *testing.T) {
 	Murmur3_32([]byte("abcd"), 0)
 	Murmur3_32([]byte("abcde"), 0)
 }
+
+func TestReplicaGroupRouting(t *testing.T) {
+	r := NewRing(100, nil)
+
+	// Shard Group 1 (N=3)
+	r.AddReplica("shard-1", "s1-leader", "leader", "10.0.10.10:9091", "10.0.10.10:8081")
+	r.AddReplica("shard-1", "s1-follower-1", "follower", "10.0.10.11:9091", "10.0.10.11:8081")
+	r.AddReplica("shard-1", "s1-follower-2", "follower", "10.0.11.10:9091", "10.0.11.10:8081")
+
+	// Shard Group 2 (N=3)
+	r.AddReplica("shard-2", "s2-leader", "leader", "10.0.10.20:9091", "10.0.10.20:8081")
+	r.AddReplica("shard-2", "s2-follower-1", "follower", "10.0.10.21:9091", "10.0.10.21:8081")
+	r.AddReplica("shard-2", "s2-follower-2", "follower", "10.0.11.20:9091", "10.0.11.20:8081")
+
+	if r.MemberCount() != 2 {
+		t.Fatalf("expected 2 replica groups on ring, got %d", r.MemberCount())
+	}
+
+	// Resolve replica group for key
+	group, err := r.GetReplicaGroup("customer#12345")
+	if err != nil {
+		t.Fatalf("failed to resolve replica group: %v", err)
+	}
+
+	if group.GroupID != "shard-1" && group.GroupID != "shard-2" {
+		t.Fatalf("unexpected group ID: %s", group.GroupID)
+	}
+
+	if len(group.Members) != 3 {
+		t.Fatalf("expected N=3 members in replica group, got %d", len(group.Members))
+	}
+
+	if group.Leader == nil || group.Leader.Role != "leader" {
+		t.Fatalf("expected valid leader in group: %+v", group.Leader)
+	}
+
+	// GetNode should return leader's gRPC address
+	shardID, addr, err := r.GetNode("customer#12345")
+	if err != nil {
+		t.Fatalf("GetNode failed: %v", err)
+	}
+	if shardID != group.GroupID {
+		t.Errorf("expected shardID %s, got %s", group.GroupID, shardID)
+	}
+	if addr != group.Leader.GRPCAddress {
+		t.Errorf("expected leader addr %s, got %s", group.Leader.GRPCAddress, addr)
+	}
+}
